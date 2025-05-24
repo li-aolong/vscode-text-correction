@@ -1,0 +1,106 @@
+{
+  "name": "text-correction",
+  "displayName": "Text Correction",
+  "description": "智能文本纠错插件",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:plaintext",
+    "onLanguage:markdown"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "textCorrection.correctFullText",
+        "title": "全文纠错"
+      },
+      {
+        "command": "textCorrection.cancelCorrection",
+        "title": "取消纠错"
+      },
+      {
+        "command": "textCorrection.acceptAllChanges",
+        "title": "接受全部修改"
+      },
+      {
+        "command": "textCorrection.rejectAllChanges",
+        "title": "拒绝全部修改"
+      },
+      {
+        "command": "textCorrection.nextChange",
+        "title": "下一个修改"
+      },
+      {
+        "command": "textCorrection.previousChange",
+        "title": "上一个修改"
+      }
+    ],
+    "configuration": {
+      "title": "Text Correction",
+      "properties": {
+        "textCorrection.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API密钥"
+        },
+        "textCorrection.baseUrl": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "API服务地址"
+        },
+        "textCorrection.model": {
+          "type": "string",
+          "default": "gpt-3.5-turbo",
+          "description": "使用的模型名称"
+        },
+        "textCorrection.inputTokenCostPerMillion": {
+          "type": "number",
+          "default": 1.5,
+          "description": "每百万输入Token花费（元）"
+        },
+        "textCorrection.outputTokenCostPerMillion": {
+          "type": "number",
+          "default": 2.0,
+          "description": "每百万输出Token花费（元）"
+        },
+        "textCorrection.prompt": {
+          "type": "string",
+          "default": "# 输入文本\n{user_content}\n\n---\n对以上输入文本进行检错并纠正，以JSON格式输出：\n1. 如果没有错误，返回 {\"result\": true, \"corrected_text\": null}\n2. 如果有错误，返回 {\"result\": false, \"corrected_text\": \"纠正后的文本\"}",
+          "description": "纠错提示词"
+        },
+        "textCorrection.currency": {
+          "type": "string",
+          "enum": ["CNY", "USD"],
+          "default": "CNY",
+          "description": "费用显示单位"
+        },
+        "textCorrection.exchangeRate": {
+          "type": "number",
+          "default": 7.0,
+          "description": "1美元对人民币汇率"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.74.0",
+    "@types/node": "16.x",
+    "@types/axios": "^0.14.0",
+    "@types/mocha": "^10.0.0",
+    "typescript": "^4.9.4"
+  },
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
+}
