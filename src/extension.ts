@@ -1,12 +1,15 @@
 import * as vscode from 'vscode';
 import { ConfigManager } from './config/configManager';
 import { CostCalculator } from './services/costCalculator';
-import { CorrectionService } from './services/correctionService';
+import { CorrectionService, ParagraphIdentifier, ParagraphStatus } from './services/correctionService';
 import { DiffManager } from './diff/diffManager';
+import { ParagraphCodeLensProvider } from './providers/paragraphCodeLensProvider';
 
 let statusBarItem: vscode.StatusBarItem;
 let correctionStatusBarItem: vscode.StatusBarItem;
 let cancelStatusBarItem: vscode.StatusBarItem;
+let acceptAllStatusBarItem: vscode.StatusBarItem;
+let rejectAllStatusBarItem: vscode.StatusBarItem;
 let configManager: ConfigManager;
 let costCalculator: CostCalculator;
 let correctionService: CorrectionService;
@@ -30,11 +33,21 @@ export function activate(context: vscode.ExtensionContext) {
     // 注册命令
     registerCommands(context);
 
+    // 注册段落 CodeLens 提供程序
+    const paragraphCodeLensProvider = new ParagraphCodeLensProvider(correctionService);
+    context.subscriptions.push(
+        vscode.languages.registerCodeLensProvider(
+            { scheme: 'file', language: '*' }, // 适用于所有文件类型，可以根据需要调整
+            paragraphCodeLensProvider
+        )
+    );
+
     // 注册事件监听器
     registerEventListeners(context);
 
     // 初始更新状态栏
     updateStatusBar();
+    updateCorrectionActionButtonsVisibility(); // 更新新增按钮的可见性
 }
 
 function createStatusBarItems() {
@@ -53,6 +66,20 @@ function createStatusBarItems() {
     cancelStatusBarItem.text = "$(x)";
     cancelStatusBarItem.command = 'textCorrection.cancelCorrection';
     cancelStatusBarItem.tooltip = "取消纠错";
+
+    // 接受全部按钮状态栏（初始隐藏）
+    acceptAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -12);
+    acceptAllStatusBarItem.text = "$(check-all) 全接受";
+    acceptAllStatusBarItem.command = 'textCorrection.acceptAllChanges';
+    acceptAllStatusBarItem.tooltip = "接受所有更改";
+    acceptAllStatusBarItem.hide();
+
+    // 拒绝全部按钮状态栏（初始隐藏）
+    rejectAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -13);
+    rejectAllStatusBarItem.text = "$(close-all) 全拒绝";
+    rejectAllStatusBarItem.command = 'textCorrection.rejectAllChanges';
+    rejectAllStatusBarItem.tooltip = "拒绝所有更改";
+    rejectAllStatusBarItem.hide();
 }
 
 function registerCommands(context: vscode.ExtensionContext) {
@@ -85,6 +112,7 @@ function registerCommands(context: vscode.ExtensionContext) {
             correctionStatusBarItem.text = "$(pencil) 全文纠错";
             correctionStatusBarItem.command = 'textCorrection.correctFullText';
             cancelStatusBarItem.hide();
+            updateCorrectionActionButtonsVisibility(); // 更新“接受全部”/“拒绝全部”按钮的可见性
         }
     });
 
@@ -100,12 +128,16 @@ function registerCommands(context: vscode.ExtensionContext) {
     });
 
     // 差异管理命令
-    const acceptAllCommand = vscode.commands.registerCommand('textCorrection.acceptAllChanges', () => {
-        diffManager.acceptAllChanges();
+    const acceptAllCommand = vscode.commands.registerCommand('textCorrection.acceptAllChanges', async () => {
+        await diffManager.acceptAllChanges();
+        correctionService.updateAllParagraphsStatus(ParagraphStatus.Accepted);
+        updateCorrectionActionButtonsVisibility();
     });
 
-    const rejectAllCommand = vscode.commands.registerCommand('textCorrection.rejectAllChanges', () => {
-        diffManager.rejectAllChanges();
+    const rejectAllCommand = vscode.commands.registerCommand('textCorrection.rejectAllChanges', async () => {
+        await diffManager.rejectAllChanges();
+        correctionService.updateAllParagraphsStatus(ParagraphStatus.Rejected);
+        updateCorrectionActionButtonsVisibility();
     });
 
     const nextChangeCommand = vscode.commands.registerCommand('textCorrection.nextChange', () => {
@@ -116,6 +148,28 @@ function registerCommands(context: vscode.ExtensionContext) {
         diffManager.goToPreviousChange();
     });
 
+    // 段落接受命令
+    const acceptParagraphCommand = vscode.commands.registerCommand('textCorrection.acceptParagraph', (identifier: ParagraphIdentifier) => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            correctionService.acceptParagraph(identifier, editor);
+            updateCorrectionActionButtonsVisibility(); // 更新按钮可见性
+        } else {
+            vscode.window.showErrorMessage('无法接受段落：没有活动的编辑器。');
+        }
+    });
+
+    // 段落拒绝命令
+    const rejectParagraphCommand = vscode.commands.registerCommand('textCorrection.rejectParagraph', (identifier: ParagraphIdentifier) => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            correctionService.rejectParagraph(identifier, editor);
+            updateCorrectionActionButtonsVisibility(); // 更新按钮可见性
+        } else {
+            vscode.window.showErrorMessage('无法拒绝段落：没有活动的编辑器。');
+        }
+    });
+
     context.subscriptions.push(
         correctFullTextCommand,
         cancelCorrectionCommand,
@@ -123,9 +177,13 @@ function registerCommands(context: vscode.ExtensionContext) {
         rejectAllCommand,
         nextChangeCommand,
         previousChangeCommand,
+        acceptParagraphCommand, // 新增
+        rejectParagraphCommand, // 新增
         statusBarItem,
         correctionStatusBarItem,
         cancelStatusBarItem,
+        acceptAllStatusBarItem, // 新增
+        rejectAllStatusBarItem, // 新增
         diffManager
     );
 }
@@ -178,6 +236,16 @@ function updateStatusBar() {
     statusBarItem.text = statusText;
 }
 
+function updateCorrectionActionButtonsVisibility() {
+    if (diffManager && diffManager.hasChanges()) {
+        acceptAllStatusBarItem.show();
+        rejectAllStatusBarItem.show();
+    } else {
+        acceptAllStatusBarItem.hide();
+        rejectAllStatusBarItem.hide();
+    }
+}
+
 export function deactivate() {
     if (statusBarItem) {
         statusBarItem.dispose();
@@ -187,6 +255,12 @@ export function deactivate() {
     }
     if (cancelStatusBarItem) {
         cancelStatusBarItem.dispose();
+    }
+    if (acceptAllStatusBarItem) {
+        acceptAllStatusBarItem.dispose();
+    }
+    if (rejectAllStatusBarItem) {
+        rejectAllStatusBarItem.dispose();
     }
     if (diffManager) {
         diffManager.dispose();

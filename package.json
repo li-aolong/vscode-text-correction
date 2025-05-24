@@ -66,7 +66,7 @@
         },
         "textCorrection.outputTokenCostPerMillion": {
           "type": "number",
-          "default": 2.0,
+          "default": 2,
           "description": "每百万输出Token花费（元）"
         },
         "textCorrection.prompt": {
@@ -76,13 +76,16 @@
         },
         "textCorrection.currency": {
           "type": "string",
-          "enum": ["CNY", "USD"],
+          "enum": [
+            "CNY",
+            "USD"
+          ],
           "default": "CNY",
           "description": "费用显示单位"
         },
         "textCorrection.exchangeRate": {
           "type": "number",
-          "default": 7.0,
+          "default": 7,
           "description": "1美元对人民币汇率"
         }
       }
@@ -94,13 +97,15 @@
     "watch": "tsc -watch -p ./"
   },
   "devDependencies": {
-    "@types/vscode": "^1.74.0",
-    "@types/node": "16.x",
     "@types/axios": "^0.14.0",
     "@types/mocha": "^10.0.0",
+    "@types/node": "16.x",
+    "@types/uuid": "^10.0.0",
+    "@types/vscode": "^1.74.0",
     "typescript": "^4.9.4"
   },
   "dependencies": {
-    "axios": "^1.6.0"
+    "axios": "^1.6.0",
+    "uuid": "^11.1.0"
   }
 }

@@ -5,7 +5,7 @@ interface CharDiff {
     text: string;
 }
 
-interface ChangeInfo {
+export interface ChangeInfo {
     range: vscode.Range;
     original: string;
     corrected: string;
@@ -175,7 +175,7 @@ export class DiffManager {
         }
     }
 
-    public acceptAllChanges(): void {
+    public acceptAllChanges(): Promise<void> {
         this.changes.forEach(change => {
             change.accepted = true;
             if (change.webviewPanel) {
@@ -183,8 +183,8 @@ export class DiffManager {
             }
         });
         this.clearDecorations();
-        
-        this.saveCurrentFile().then(() => {
+    
+    return this.saveCurrentFile().then(() => {
             vscode.window.showInformationMessage(`已接受所有 ${this.changes.length} 处修改并保存文件`);
             this.changes = []; // 清空已处理的修改
         }).catch(err => {
@@ -203,10 +203,10 @@ export class DiffManager {
         }
     }
 
-    public rejectAllChanges(): void {
+    public rejectAllChanges(): Promise<void> {
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
-            return;
+            return Promise.resolve(); // 返回一个已解决的 Promise
         }
         
         // 使用原始文档内容进行恢复
@@ -242,7 +242,7 @@ export class DiffManager {
         });
 
         // (确保在所有修改被拒绝并恢复后)
-        this.saveCurrentFile().then(() => {
+    return this.saveCurrentFile().then(() => {
             vscode.window.showInformationMessage(`已拒绝所有 ${this.changes.length} 处修改并保存文件`);
             this.changes = []; // 清空已处理的修改
         }).catch(err => {
@@ -554,132 +554,126 @@ export class DiffManager {
     }
 
     private formatDiffForHtml(diffText: string): string {
-        // 先对文本内容进行HTML特殊字符转义
-        let escapedText = diffText
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;');
-        
-        // 然后添加HTML标签
-        return escapedText
-            .replace(/\[-(.*?)\]/g, '<span class="delete">$1</span>')
-            .replace(/\[\+(.*?)\]/g, '<span class="insert">$1</span>');
+    // 先对文本内容进行HTML特殊字符转义
+    let escapedText = diffText
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    
+    // 然后添加HTML标签
+    return escapedText
+        .replace(/\[-(.*?)\]/g, '<span class="delete">$1</span>')
+        .replace(/\[\+(.*?)\]/g, '<span class="insert">$1</span>');
+}
+
+private acceptSingleChange(change: ChangeInfo): void {
+    change.accepted = true;
+    if (change.webviewPanel) {
+        change.webviewPanel.dispose();
+        change.webviewPanel = undefined;
+    }
+    this.removeChangeFromList(change);
+    this.updateDecorations();
+
+    // Logic for highlight/save on last change removed for paragraph-specific actions
+    // if (this.changes.length > 0) {
+    //     if (this.currentChangeIndex >= this.changes.length) {
+    //         this.currentChangeIndex = 0;
+    //     }
+    //     // this.highlightCurrentChange();
+    // } else {
+    //     // this.saveCurrentFile();
+    //     // vscode.window.showInformationMessage('所有修改已处理完成并保存文件！');
+    // }
+}
+
+private rejectSingleChange(change: ChangeInfo): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        return;
     }
 
-    private acceptSingleChange(change: ChangeInfo): void {
-        change.accepted = true;
-        if (change.webviewPanel) {
-            change.webviewPanel.dispose();
-            change.webviewPanel = undefined;
-        }
-        this.removeChangeFromList(change);
-        this.updateDecorations();
+    editor.edit(editBuilder => {
+        editBuilder.replace(change.range, change.original);
+    });
 
-        if (this.changes.length > 0) {
-            if (this.currentChangeIndex >= this.changes.length) {
-                this.currentChangeIndex = 0;
-            }
-            this.highlightCurrentChange();
-        } else {
-            // 所有修改处理完成后保存文件
-            this.saveCurrentFile();
-            vscode.window.showInformationMessage('所有修改已处理完成并保存文件！');
-        }
+    if (change.webviewPanel) {
+        change.webviewPanel.dispose();
+        change.webviewPanel = undefined;
     }
 
-    private rejectSingleChange(change: ChangeInfo): void {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            return;
-        }
+    this.removeChangeFromList(change);
+    this.updateDecorations();
 
-        // 直接使用编辑器的文本替换功能，保持原始文本的精确格式
-        editor.edit(editBuilder => {
-            // 直接使用原始文本，不做任何处理
-            editBuilder.replace(change.range, change.original);
-        });
+    // Logic for highlight/save on last change removed for paragraph-specific actions
+    // if (this.changes.length > 0) {
+    //     if (this.currentChangeIndex >= this.changes.length) {
+    //         this.currentChangeIndex = 0;
+    //     }
+    //     // this.highlightCurrentChange();
+    // } else {
+    //     // this.saveCurrentFile();
+    //     // vscode.window.showInformationMessage('所有修改已处理完成并保存文件！');
+    // }
+}
 
-        if (change.webviewPanel) {
-            change.webviewPanel.dispose();
-            change.webviewPanel = undefined;
-        }
-
-        this.removeChangeFromList(change);
-        this.updateDecorations();
-
-        if (this.changes.length > 0) {
-            if (this.currentChangeIndex >= this.changes.length) {
-                this.currentChangeIndex = 0;
-            }
-            this.highlightCurrentChange();
-        } else {
-            // 所有修改处理完成后保存文件
-            this.saveCurrentFile();
-            vscode.window.showInformationMessage('所有修改已处理完成并保存文件！');
+private removeChangeFromList(change: ChangeInfo): void {
+    const index = this.changes.indexOf(change);
+    if (index > -1) {
+        this.changes.splice(index, 1);
+        if (this.currentChangeIndex >= this.changes.length) {
+            this.currentChangeIndex = Math.max(0, this.changes.length - 1);
         }
     }
+}
 
-    private removeChangeFromList(change: ChangeInfo): void {
-        const index = this.changes.indexOf(change);
-        if (index > -1) {
-            this.changes.splice(index, 1);
-            if (this.currentChangeIndex >= this.changes.length) {
-                this.currentChangeIndex = Math.max(0, this.changes.length - 1);
-            }
-        }
+private clearDecorations(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (editor) {
+        editor.setDecorations(this.deleteDecorationType, []);
+        editor.setDecorations(this.insertDecorationType, []);
+        editor.setDecorations(this.highlightDecorationType, []);
+    }
+}
+
+/**
+ * 显示全局操作按钮（接受全部/拒绝全部）的提示信息
+ */
+public showGlobalActionButtons(): void {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+        return;
     }
 
-    private clearDecorations(): void {
-        const editor = vscode.window.activeTextEditor;
-        if (editor) {
-            editor.setDecorations(this.deleteDecorationType, []);
-            editor.setDecorations(this.insertDecorationType, []);
-            editor.setDecorations(this.highlightDecorationType, []);
-        }
+    if (!this.hasChanges()) {
+        vscode.window.showInformationMessage("没有检测到任何更改。");
+        return;
     }
 
-        /**
-     * 显示全局操作按钮（接受全部/拒绝全部）的提示信息
-     */
-    public showGlobalActionButtons(): void {
-        const editor = vscode.window.activeTextEditor;
-        if (!editor) {
-            // 通常不应该在这里发生，因为 correctFullText 会检查 editor
-            return;
-        }
+    const message = "文本纠正完成，请选择操作：";
+    const acceptAllOption = "✓ 接受全部";
+    const rejectAllOption = "✗ 拒绝全部";
 
-        if (!this.hasChanges()) {
-            vscode.window.showInformationMessage("没有检测到任何更改。");
-            return;
-        }
-
-        const message = "文本纠正完成，请选择操作：";
-        const acceptAllOption = "✓ 接受全部";
-        const rejectAllOption = "✗ 拒绝全部";
-
-        vscode.window.showInformationMessage(message, { modal: true }, acceptAllOption, rejectAllOption)
-            .then(selection => {
-                if (selection === acceptAllOption) {
-                    this.acceptAllChanges();
-                } else if (selection === rejectAllOption) {
-                    this.rejectAllChanges();
-                } else {
-                    // 用户关闭了提示框或选择了其他（理论上不应该有其他选项）
-                    // 默认行为可以是拒绝全部，以清理状态
-                    this.rejectAllChanges();
-                }
-            });
-    }
-
-
-    public dispose(): void {
-        this.changes.forEach(change => {
-            if (change.webviewPanel) {
-                change.webviewPanel.dispose();
+    vscode.window.showInformationMessage(message, acceptAllOption, rejectAllOption)
+        .then(selection => {
+            if (selection === acceptAllOption) {
+                this.acceptAllChanges();
+            } else if (selection === rejectAllOption) {
+                this.rejectAllChanges();
+            } else {
+                this.rejectAllChanges();
             }
         });
-        this.deleteDecorationType.dispose();
-        this.insertDecorationType.dispose();
-        this.highlightDecorationType.dispose();
-    }
+}
+
+public dispose(): void {
+    this.changes.forEach(change => {
+        if (change.webviewPanel) {
+            change.webviewPanel.dispose();
+        }
+    });
+    this.deleteDecorationType.dispose();
+    this.insertDecorationType.dispose();
+    this.highlightDecorationType.dispose();
+}
 }

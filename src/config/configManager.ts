@@ -9,6 +9,7 @@ export interface CorrectionConfig {
     prompt: string;
     currency: 'CNY' | 'USD';
     exchangeRate: number;
+    timeout: number; // 新增 timeout 属性，单位毫秒
 }
 
 export class ConfigManager {
@@ -29,7 +30,8 @@ export class ConfigManager {
             outputTokenCostPerMillion: vsconfig.get('outputTokenCostPerMillion', 2.0),
             prompt: vsconfig.get('prompt', '请对以下文本进行纠错，保持原意不变，只修正语法、拼写和标点错误：'),
             currency: vsconfig.get('currency', 'CNY') as 'CNY' | 'USD',
-            exchangeRate: vsconfig.get('exchangeRate', 7.0)
+            exchangeRate: vsconfig.get('exchangeRate', 7.0),
+            timeout: vsconfig.get('requestTimeout', 60000) // 从配置中读取 timeout，默认60秒
         };
     }
 
