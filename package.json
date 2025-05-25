@@ -18,27 +18,27 @@
     "commands": [
       {
         "command": "textCorrection.correctFullText",
-        "title": "全文纠错"
+        "title": "Text Correction: 全文纠错"
       },
       {
         "command": "textCorrection.cancelCorrection",
-        "title": "取消纠错"
+        "title": "Text Correction: 取消纠错"
       },
       {
         "command": "textCorrection.acceptAllChanges",
-        "title": "接受全部修改"
+        "title": "Text Correction: 接受全部修改"
       },
       {
         "command": "textCorrection.rejectAllChanges",
-        "title": "拒绝全部修改"
+        "title": "Text Correction: 拒绝全部修改"
       },
       {
         "command": "textCorrection.nextChange",
-        "title": "下一个修改"
+        "title": "Text Correction: 下一个修改"
       },
       {
         "command": "textCorrection.previousChange",
-        "title": "上一个修改"
+        "title": "Text Correction: 上一个修改"
       }
     ],
     "configuration": {

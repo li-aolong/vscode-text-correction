@@ -15,6 +15,10 @@ export interface EditorState {
     isCancelled: boolean;
     decorationsApplied: boolean; // 标记装饰是否已应用
     lastDecorationUpdate: number; // 最后一次装饰更新时间
+    // 实际花费跟踪
+    totalInputTokens: number; // 累计输入token
+    totalOutputTokens: number; // 累计输出token
+    totalActualCost: number; // 累计实际花费
 }
 
 /**
@@ -123,7 +127,10 @@ export class EditorStateManager {
                 currentChangeIndex: 0,
                 isCancelled: false,
                 decorationsApplied: false,
-                lastDecorationUpdate: 0
+                lastDecorationUpdate: 0,
+                totalInputTokens: 0,
+                totalOutputTokens: 0,
+                totalActualCost: 0
             });
         }
 
@@ -161,6 +168,10 @@ export class EditorStateManager {
         state.isCancelled = false;
         state.isCorrectingInProgress = false;
         state.originalDocumentContent = '';
+        // 重置花费统计
+        state.totalInputTokens = 0;
+        state.totalOutputTokens = 0;
+        state.totalActualCost = 0;
         this._onDidChangeEditorState.fire(state.uri);
     }
 
@@ -170,6 +181,17 @@ export class EditorStateManager {
     public hasChanges(editor: vscode.TextEditor): boolean {
         const state = this.getEditorState(editor);
         return state.changes.length > 0 || state.paragraphCorrections.some(pc => pc.status === ParagraphStatus.Pending);
+    }
+
+    /**
+     * 更新编辑器的花费统计
+     */
+    public updateCostStatistics(editor: vscode.TextEditor, inputTokens: number, outputTokens: number, cost: number): void {
+        const state = this.getEditorState(editor);
+        state.totalInputTokens += inputTokens;
+        state.totalOutputTokens += outputTokens;
+        state.totalActualCost += cost;
+        this._onDidChangeEditorState.fire(state.uri);
     }
 
     /**

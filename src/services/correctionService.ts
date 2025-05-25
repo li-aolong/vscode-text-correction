@@ -3,6 +3,7 @@ import axios, { AxiosError } from 'axios';
 import { ConfigManager } from '../config/configManager';
 import { DiffManager, ChangeInfo } from '../diff/diffManager'; // Assuming ChangeInfo is exported from DiffManager
 import { EditorStateManager } from './editorStateManager';
+import { CostCalculator } from './costCalculator';
 
 // 新增类型和接口
 export type ParagraphIdentifier = string; // 例如 "lineStart-lineEnd"
@@ -30,6 +31,21 @@ export interface ParagraphCorrection {
 interface CorrectionResponse {
     result: boolean;
     corrected_text: string | null;
+}
+
+interface ApiUsage {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+}
+
+interface ApiResponse {
+    choices: Array<{
+        message: {
+            content: string;
+        };
+    }>;
+    usage?: ApiUsage;
 }
 
 export class CorrectionService {
@@ -233,7 +249,7 @@ export class CorrectionService {
             const paraInfo = paragraphsInfo[i];
             if (paraInfo.content.trim()) {
                 try {
-                    const apiCorrectedText = await this.correctParagraphAPI(paraInfo.content);
+                    const apiResult = await this.correctParagraphAPI(paraInfo.content);
 
                     // 重新获取当前段落在文档中的实际位置
                     const currentRange = this.findParagraphInCurrentDocument(currentEditor, paraInfo.content, i);
@@ -245,22 +261,37 @@ export class CorrectionService {
                         originalLines.push(currentEditor.document.lineAt(lineIndex).text);
                     }
 
-                    if (apiCorrectedText !== paraInfo.content) {
+                    // 更新花费统计
+                    if (apiResult.usage) {
+                        const costCalculator = new CostCalculator(this.configManager);
+                        const actualCost = costCalculator.calculateActualCost(
+                            apiResult.usage.prompt_tokens,
+                            apiResult.usage.completion_tokens
+                        );
+                        this.editorStateManager.updateCostStatistics(
+                            currentEditor,
+                            apiResult.usage.prompt_tokens,
+                            apiResult.usage.completion_tokens,
+                            actualCost
+                        );
+                    }
+
+                    if (apiResult.correctedText !== paraInfo.content) {
                         // 1. 应用修改到编辑器
                         await this.applyCorrectionToEditor(currentEditor, {
                             content: paraInfo.content,
                             startLine: currentRange.start.line,
                             endLine: currentRange.end.line
-                        }, apiCorrectedText);
+                        }, apiResult.correctedText);
 
                         // 2. 重新计算修改后的range（基于新的文档状态）
-                        const newRange = this.calculateRangeAfterReplacement(currentRange, apiCorrectedText);
+                        const newRange = this.calculateRangeAfterReplacement(currentRange, apiResult.correctedText);
 
                         // 3. 创建 ParagraphCorrection 对象
                         const correctionEntry: ParagraphCorrection = {
                             id: paragraphId,
                             originalText: paraInfo.content,
-                            correctedText: apiCorrectedText,
+                            correctedText: apiResult.correctedText,
                             range: newRange,
                             status: ParagraphStatus.Pending,
                             originalLines: originalLines,
@@ -269,7 +300,7 @@ export class CorrectionService {
 
                         // 4. 告诉 DiffManager 添加差异高亮到正确的编辑器
                         if (this.diffManager) {
-                            this.diffManager.addChange(newRange, paraInfo.content, apiCorrectedText, currentEditor);
+                            this.diffManager.addChange(newRange, paraInfo.content, apiResult.correctedText, currentEditor);
                         }
 
                         // 5. 立即更新后续段落的range（因为当前段落的行数可能发生了变化）
@@ -439,7 +470,7 @@ export class CorrectionService {
     }
 
     // 重命名以区分概念上的段落和API调用
-    private async correctParagraphAPI(text: string): Promise<string> {
+    private async correctParagraphAPI(text: string): Promise<{ correctedText: string; usage?: ApiUsage }> {
         const config = this.configManager.getConfig();
 
         // 构建发送给API的完整prompt
@@ -470,6 +501,7 @@ export class CorrectionService {
             );
 
             const responseContent = response.data.choices[0].message.content.trim();
+            const usage = response.data.usage; // 获取usage信息
 
             try {
                 const jsonContent = this.extractJsonFromResponse(responseContent);
@@ -477,15 +509,15 @@ export class CorrectionService {
 
                 // 如果没有错误（result为true），返回原文本
                 if (correctionResult.result === true || correctionResult.corrected_text === null) {
-                    return text;
+                    return { correctedText: text, usage };
                 }
 
                 // 如果有错误，返回纠正后的文本
-                return correctionResult.corrected_text || text;
+                return { correctedText: correctionResult.corrected_text || text, usage };
 
             } catch (parseError) {
                 console.error(`API parse error:`, parseError instanceof Error ? parseError.message : String(parseError));
-                return text;
+                return { correctedText: text, usage };
             }
 
         } catch (error) {

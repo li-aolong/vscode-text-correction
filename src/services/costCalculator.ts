@@ -60,4 +60,23 @@ export class CostCalculator {
     public estimateTokens(text: string): { input: number; output: number } {
         return this.estimateTokensFromText(text);
     }
+
+    /**
+     * 根据实际token使用量计算费用
+     */
+    public calculateActualCost(inputTokens: number, outputTokens: number): number {
+        const config = this.configManager.getConfig();
+
+        const inputCost = (inputTokens / 1000000) * config.inputTokenCostPerMillion;
+        const outputCost = (outputTokens / 1000000) * config.outputTokenCostPerMillion;
+
+        return inputCost + outputCost;
+    }
+
+    /**
+     * 格式化费用显示
+     */
+    public formatCost(amount: number): string {
+        return this.formatCurrency(amount);
+    }
 }

@@ -8,6 +8,7 @@ import { CostCalculator } from '../services/costCalculator';
 interface EditorStatusBarItems {
     uri: string;
     costStatusBarItem: vscode.StatusBarItem;
+    actualCostStatusBarItem: vscode.StatusBarItem; // 新增：实际花费状态栏
     correctionStatusBarItem: vscode.StatusBarItem;
     cancelStatusBarItem: vscode.StatusBarItem;
     acceptAllStatusBarItem: vscode.StatusBarItem;
@@ -36,7 +37,8 @@ export class StatusBarManager {
         if (!this.editorStatusBars.has(uri)) {
             const items: EditorStatusBarItems = {
                 uri,
-                costStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5),
+                costStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 6),
+                actualCostStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5),
                 correctionStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 4),
                 cancelStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 3),
                 acceptAllStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 2),
@@ -80,6 +82,7 @@ export class StatusBarManager {
         const state = this.editorStateManager.getEditorState(editor);
 
         items.costStatusBarItem.show();
+        items.actualCostStatusBarItem.show();
         items.correctionStatusBarItem.show();
 
         // 根据编辑器状态决定其他按钮的显示和内容
@@ -92,6 +95,7 @@ export class StatusBarManager {
     private hideAllStatusBars(): void {
         for (const items of this.editorStatusBars.values()) {
             items.costStatusBarItem.hide();
+            items.actualCostStatusBarItem.hide();
             items.correctionStatusBarItem.hide();
             items.cancelStatusBarItem.hide();
             items.acceptAllStatusBarItem.hide();
@@ -106,8 +110,9 @@ export class StatusBarManager {
         const items = this.getOrCreateStatusBarItems(editor);
         const state = this.editorStateManager.getEditorState(editor);
 
-        // 更新费用预估
+        // 更新费用预估和实际花费
         this.updateCostStatusBar(editor, items);
+        this.updateActualCostStatusBar(editor, items);
 
         // 更新纠错状态
         if (state.isCorrectingInProgress) {
@@ -146,6 +151,24 @@ export class StatusBarManager {
         }
 
         items.costStatusBarItem.text = statusText;
+    }
+
+    /**
+     * 更新实际花费状态栏
+     */
+    private updateActualCostStatusBar(editor: vscode.TextEditor, items: EditorStatusBarItems): void {
+        const state = this.editorStateManager.getEditorState(editor);
+
+        if (state.totalActualCost > 0 || state.totalInputTokens > 0 || state.totalOutputTokens > 0) {
+            const formattedCost = this.costCalculator.formatCost(state.totalActualCost);
+            const totalTokens = state.totalInputTokens + state.totalOutputTokens;
+
+            items.actualCostStatusBarItem.text = `$(credit-card) 已花费: ${formattedCost} | Tokens: ${totalTokens} (输入:${state.totalInputTokens}, 输出:${state.totalOutputTokens})`;
+            items.actualCostStatusBarItem.tooltip = `累计花费详情:\n输入Token: ${state.totalInputTokens}\n输出Token: ${state.totalOutputTokens}\n总Token: ${totalTokens}\n实际花费: ${formattedCost}`;
+        } else {
+            items.actualCostStatusBarItem.text = "$(credit-card) 已花费: 0";
+            items.actualCostStatusBarItem.tooltip = "尚未产生费用";
+        }
     }
 
     /**
@@ -189,6 +212,7 @@ export class StatusBarManager {
             if (!openUris.has(uri)) {
                 // 释放状态栏项目
                 items.costStatusBarItem.dispose();
+                items.actualCostStatusBarItem.dispose();
                 items.correctionStatusBarItem.dispose();
                 items.cancelStatusBarItem.dispose();
                 items.acceptAllStatusBarItem.dispose();
@@ -208,6 +232,7 @@ export class StatusBarManager {
         for (const editorItems of this.editorStatusBars.values()) {
             items.push(
                 editorItems.costStatusBarItem,
+                editorItems.actualCostStatusBarItem,
                 editorItems.correctionStatusBarItem,
                 editorItems.cancelStatusBarItem,
                 editorItems.acceptAllStatusBarItem,
@@ -223,6 +248,7 @@ export class StatusBarManager {
     public dispose(): void {
         for (const items of this.editorStatusBars.values()) {
             items.costStatusBarItem.dispose();
+            items.actualCostStatusBarItem.dispose();
             items.correctionStatusBarItem.dispose();
             items.cancelStatusBarItem.dispose();
             items.acceptAllStatusBarItem.dispose();
