@@ -1,6 +1,6 @@
 # 智能文本纠错 | Text Correction
 
-一个基于AI的智能文本纠错VS Code扩展，支持多种语言模型API，提供实时文本纠错和差异对比功能。| An AI-powered intelligent text correction VS Code extension that supports multiple language model APIs, providing real-time text correction and diff comparison features.
+一个基于AI的智能文本纠错VS Code扩展，支持多种语言模型API，提供文本纠错和差异对比功能。| An AI-powered intelligent text correction VS Code extension that supports multiple language model APIs, providing real-time text correction and diff comparison features.
 
 ## ✨ 主要特性 | Key Features
 
