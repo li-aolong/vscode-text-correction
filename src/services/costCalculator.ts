@@ -9,12 +9,13 @@ export class CostCalculator {
         }
 
         const config = this.configManager.getConfig();
-        
-        // 简单的token估算：大约4个字符 = 1个token（中文可能更少）
-        const estimatedInputTokens = Math.ceil(text.length / 3);
-        const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.1); // 假设输出比输入多10%
 
-        // 计算费用（单位：元）
+        // 使用新的token估算方法
+        const tokens = this.estimateTokensFromText(text);
+        const estimatedInputTokens = tokens.input;
+        const estimatedOutputTokens = tokens.output;
+
+        // 计算费用
         const inputCost = (estimatedInputTokens / 1000000) * config.inputTokenCostPerMillion;
         const outputCost = (estimatedOutputTokens / 1000000) * config.outputTokenCostPerMillion;
         const totalCost = inputCost + outputCost;
@@ -24,22 +25,39 @@ export class CostCalculator {
 
     private formatCurrency(amount: number): string {
         const config = this.configManager.getConfig();
-        
-        if (config.currency === 'USD') {
-            const usdAmount = amount / config.exchangeRate;
-            return `$${usdAmount.toFixed(4)}`;
-        } else {
-            return `¥${amount.toFixed(4)}`;
-        }
+
+        // 格式化数字，保留4位小数，并将单位放在数字后面
+        const formattedAmount = amount.toFixed(4);
+        return `${formattedAmount}${config.costUnit}`;
     }
 
-    public estimateTokens(text: string): { input: number; output: number } {
-        const estimatedInputTokens = Math.ceil(text.length / 3);
-        const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.1);
-        
+    /**
+     * 估算文本的token数量
+     * 英文按4个字符1个token，中文按1.8个字符1个token
+     */
+    private estimateTokensFromText(text: string): { input: number; output: number } {
+        // 移除多余的空白字符
+        const cleanText = text.trim();
+
+        // 分别计算中文字符和英文字符
+        const chineseChars = (cleanText.match(/[\u4e00-\u9fff]/g) || []).length;
+        const englishChars = cleanText.replace(/[\u4e00-\u9fff]/g, '').length;
+
+        // 英文字符：4个字符 ≈ 1个token
+        // 中文字符：1.8个字符 ≈ 1个token
+        const englishTokens = Math.ceil(englishChars / 4);
+        const chineseTokens = Math.ceil(chineseChars / 1.8);
+
+        const estimatedInputTokens = chineseTokens + englishTokens;
+        const estimatedOutputTokens = Math.ceil(estimatedInputTokens * 1.1); // 假设输出比输入多10%
+
         return {
             input: estimatedInputTokens,
             output: estimatedOutputTokens
         };
+    }
+
+    public estimateTokens(text: string): { input: number; output: number } {
+        return this.estimateTokensFromText(text);
     }
 }

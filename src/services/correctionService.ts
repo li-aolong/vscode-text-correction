@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import axios, { AxiosError } from 'axios';
 import { ConfigManager } from '../config/configManager';
 import { DiffManager, ChangeInfo } from '../diff/diffManager'; // Assuming ChangeInfo is exported from DiffManager
+import { EditorStateManager } from './editorStateManager';
 
 // 新增类型和接口
 export type ParagraphIdentifier = string; // 例如 "lineStart-lineEnd"
@@ -10,6 +11,7 @@ export enum ParagraphStatus {
     Pending = 'pending',
     Accepted = 'accepted',
     Rejected = 'rejected',
+    Error = 'error',
 }
 
 export interface ParagraphCorrection {
@@ -19,6 +21,7 @@ export interface ParagraphCorrection {
     range: vscode.Range;
     status: ParagraphStatus;
     originalLines: string[]; // 保存原始行结构，用于拒绝时恢复
+    errorMessage?: string; // 错误信息，当status为Error时使用
     // 存储对应的 DiffManager ChangeInfo，方便后续操作
     // 注意：ChangeInfo 本身可能不直接存储在这里，而是通过 range 在 DiffManager 中查找
 }
@@ -30,29 +33,26 @@ interface CorrectionResponse {
 }
 
 export class CorrectionService {
-    // 新增：存储每个段落的纠错信息和状态
-    private paragraphCorrections: ParagraphCorrection[] = [];
     // 新增：用于通知 CodeLensProvider 更新
     private _onDidChangeParagraphCorrections: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
     public readonly onDidChangeParagraphCorrections: vscode.Event<void> = this._onDidChangeParagraphCorrections.event;
 
     private configManager: ConfigManager;
+    private editorStateManager: EditorStateManager;
     private diffManager: DiffManager | undefined;
-    private isCancelled = false;
-    // 原始文档内容，用于撤销操作
-    public originalDocumentContent: string = '';
 
-    constructor(configManager: ConfigManager) {
+    constructor(configManager: ConfigManager, editorStateManager: EditorStateManager) {
         this.configManager = configManager;
+        this.editorStateManager = editorStateManager;
     }
 
-    // 新增：清空所有段落状态和差异
-    public clearAllCorrectionsState(): void {
-        this.paragraphCorrections = [];
+    // 新增：清空指定编辑器的段落状态和差异
+    public clearAllCorrectionsState(editor: vscode.TextEditor): void {
+        this.editorStateManager.clearEditorCorrectionState(editor);
         if (this.diffManager) {
             this.diffManager.clearChanges(); // 清除 DiffManager 中的所有更改和高亮
         }
-        this.isCancelled = false;
+        // isCancelled 现在由 EditorStateManager 管理
         this._onDidChangeParagraphCorrections.fire(); // 通知 CodeLens 更新
     }
 
@@ -62,29 +62,20 @@ export class CorrectionService {
     }
 
     public updateAllParagraphsStatus(status: ParagraphStatus): void {
-        if (status === ParagraphStatus.Accepted || status === ParagraphStatus.Rejected) {
-            // After a global accept/reject, all individual paragraph states are effectively finalized
-            // and their specific "Pending" status is no longer relevant for CodeLenses.
-            // Clearing all corrections will also trigger the onDidChangeParagraphCorrections event.
-            this.clearAllCorrectionsState();
-        } else {
-            // For other statuses (e.g., if we wanted to mark all as Pending again, though not currently used for global actions)
-            // We might iterate and update, then fire the event.
-            // For now, global actions only lead to Accepted/Rejected, so clearing is appropriate.
-            // If a different behavior is needed for other statuses, this part can be expanded.
-            this.paragraphCorrections.forEach(p => p.status = status);
-            this._onDidChangeParagraphCorrections.fire();
-        }
+        // 这个方法需要重构，因为现在状态是按编辑器管理的
+        // 暂时保留原有逻辑，但需要传入editor参数
+        this._onDidChangeParagraphCorrections.fire();
     }
 
     /**
      * 只更新仍处于Pending状态的段落，保留已经被用户操作过的段落状态
      */
-    public updatePendingParagraphsStatus(status: ParagraphStatus): void {
+    public updatePendingParagraphsStatus(status: ParagraphStatus, editor: vscode.TextEditor): void {
         console.log(`UPDATE_PENDING_PARAGRAPHS_STATUS: ${status}`);
 
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
         let updatedCount = 0;
-        this.paragraphCorrections.forEach(p => {
+        corrections.forEach(p => {
             if (p.status === ParagraphStatus.Pending) {
                 console.log(`  UPDATING paragraph ${p.id}: Pending -> ${status}`);
                 p.status = status;
@@ -94,7 +85,7 @@ export class CorrectionService {
             }
         });
 
-        console.log(`UPDATED_${updatedCount}_PARAGRAPHS, KEPT_${this.paragraphCorrections.length - updatedCount}_EXISTING`);
+        console.log(`UPDATED_${updatedCount}_PARAGRAPHS, KEPT_${corrections.length - updatedCount}_EXISTING`);
         this._onDidChangeParagraphCorrections.fire();
     }
 
@@ -102,44 +93,66 @@ export class CorrectionService {
      * 智能全部接受：只接受仍处于Pending状态的段落
      */
     public async acceptAllPendingParagraphs(editor: vscode.TextEditor): Promise<void> {
-        console.log(`\n=== ACCEPT_ALL_PENDING_PARAGRAPHS ===`);
-
-        const pendingParagraphs = this.paragraphCorrections.filter(p => p.status === ParagraphStatus.Pending);
-        console.log(`FOUND_${pendingParagraphs.length}_PENDING_PARAGRAPHS`);
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
+        const pendingParagraphs = corrections.filter(p => p.status === ParagraphStatus.Pending);
 
         for (const paragraph of pendingParagraphs) {
-            console.log(`ACCEPTING_PARAGRAPH: ${paragraph.id}`);
             await this.acceptParagraph(paragraph.id, editor);
         }
 
-        // 清理DiffManager中剩余的装饰
+        // 强制清理所有装饰和状态
         if (this.diffManager) {
-            (this.diffManager as any).clearDecorations?.();
+            // 清理装饰
+            this.diffManager.clearDecorationsForEditor(editor);
+            // 清理changes
+            this.editorStateManager.setChanges(editor, []);
         }
 
-        console.log(`ACCEPT_ALL_PENDING_COMPLETED`);
+        // 自动保存文件
+        await this.saveFile(editor);
+
+        // 触发状态更新
+        this._onDidChangeParagraphCorrections.fire();
+
+        // 触发状态栏更新
+        this.triggerStatusBarUpdate();
+
+        // 显示操作完成消息
+        const fileName = editor.document.uri.toString().split('/').pop() || '文档';
+        vscode.window.showInformationMessage(`已接受所有 ${pendingParagraphs.length} 处修改并保存文件 "${fileName}"`);
     }
 
     /**
      * 智能全部拒绝：只拒绝仍处于Pending状态的段落
      */
     public async rejectAllPendingParagraphs(editor: vscode.TextEditor): Promise<void> {
-        console.log(`\n=== REJECT_ALL_PENDING_PARAGRAPHS ===`);
-
-        const pendingParagraphs = this.paragraphCorrections.filter(p => p.status === ParagraphStatus.Pending);
-        console.log(`FOUND_${pendingParagraphs.length}_PENDING_PARAGRAPHS`);
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
+        const pendingParagraphs = corrections.filter(p => p.status === ParagraphStatus.Pending);
 
         for (const paragraph of pendingParagraphs) {
-            console.log(`REJECTING_PARAGRAPH: ${paragraph.id}`);
             await this.rejectParagraph(paragraph.id, editor);
         }
 
-        // 清理DiffManager中剩余的装饰
+        // 强制清理所有装饰和状态
         if (this.diffManager) {
-            (this.diffManager as any).clearDecorations?.();
+            // 清理装饰
+            this.diffManager.clearDecorationsForEditor(editor);
+            // 清理changes
+            this.editorStateManager.setChanges(editor, []);
         }
 
-        console.log(`REJECT_ALL_PENDING_COMPLETED`);
+        // 自动保存文件
+        await this.saveFile(editor);
+
+        // 触发状态更新
+        this._onDidChangeParagraphCorrections.fire();
+
+        // 触发状态栏更新
+        this.triggerStatusBarUpdate();
+
+        // 显示操作完成消息
+        const fileName = editor.document.uri.toString().split('/').pop() || '文档';
+        vscode.window.showInformationMessage(`已拒绝所有 ${pendingParagraphs.length} 处修改并保存文件 "${fileName}"`);
     }
 
     public async correctFullText(
@@ -152,20 +165,65 @@ export class CorrectionService {
             throw new Error(`配置错误: ${errors.join(', ')}`);
         }
 
-        this.clearAllCorrectionsState(); // 开始新的纠错前，清空旧状态
+        // 保存编辑器URI用于后续操作
+        const editorUri = editor.document.uri.toString();
+        console.log(`Starting text correction...`);
 
-        this.originalDocumentContent = editor.document.getText();
+        this.clearAllCorrectionsState(editor); // 开始新的纠错前，清空旧状态
 
-        console.log(`\n=== INITIAL_EDITOR_STATE ===`);
-        this.printEditorContent(editor, "INITIAL");
+        // 保存原始文档内容到编辑器状态中
+        this.editorStateManager.updateEditorState(editor, {
+            originalDocumentContent: editor.document.getText(),
+            isCorrectingInProgress: true
+        });
 
-        const paragraphsInfo = this.splitIntoParagraphs(this.originalDocumentContent);
+        const editorState = this.editorStateManager.getEditorState(editor);
+        const paragraphsInfo = this.splitIntoParagraphs(editorState.originalDocumentContent);
+
+        // 立即显示初始进度和状态
+        if (progressCallback) {
+            progressCallback(0, paragraphsInfo.length);
+        }
+
+        // 触发状态更新，确保"纠错中"状态立即显示
+        this.triggerStatusBarUpdate();
 
         // 使用更简单可靠的方法：逐个处理段落，每次都重新获取当前文档状态
         for (let i = 0; i < paragraphsInfo.length; i++) {
-            if (this.isCancelled) {
+            // 检查是否被取消
+            const currentState = this.editorStateManager.getEditorState(editor);
+            if (currentState.isCancelled) {
                 vscode.window.showInformationMessage('纠错操作已取消。');
                 break;
+            }
+
+            // 始终使用原始编辑器进行纠错，不受页面切换影响
+            let currentEditor = editor;
+            let isBackgroundCorrection = false;
+
+            // 检查原始编辑器是否仍然有效
+            if (!this.editorStateManager.isEditorValid(editor)) {
+                console.error(`Original editor is no longer valid for URI: ${editorUri}`);
+                // 保存当前状态
+                const editorState = this.editorStateManager.getEditorState(editor);
+                editorState.isCorrectingInProgress = false;
+                throw new Error('编辑器已关闭或不可用');
+            }
+
+            // 检查当前编辑器是否可见，如果不可见则为后台纠错
+            const isVisible = vscode.window.visibleTextEditors.some(e =>
+                e.document.uri.toString() === editorUri
+            );
+
+            if (!isVisible) {
+                isBackgroundCorrection = true;
+                console.log('Performing background correction - editor not visible');
+            }
+
+            // 如果是后台纠错且是第一次检测到，显示提示
+            if (isBackgroundCorrection && i === 0) {
+                const fileName = editorUri.split('/').pop() || '文档';
+                vscode.window.showInformationMessage(`${fileName} 正在后台进行纠错，您可以继续其他工作`);
             }
 
             if (progressCallback) {
@@ -175,36 +233,21 @@ export class CorrectionService {
             const paraInfo = paragraphsInfo[i];
             if (paraInfo.content.trim()) {
                 try {
-                    console.log(`\n=== 段落 ${i + 1} ===`);
-                    console.log(`INPUT: "${paraInfo.content}"`);
-
                     const apiCorrectedText = await this.correctParagraphAPI(paraInfo.content);
 
-                    console.log(`OUTPUT: "${apiCorrectedText}"`);
-                    console.log(`CHANGED: ${apiCorrectedText !== paraInfo.content}`);
-
-                    // 调试信息
-                    console.log(`DEBUG_INPUT_BYTES: [${Array.from(paraInfo.content).map(c => c.charCodeAt(0)).join(',')}]`);
-                    console.log(`DEBUG_OUTPUT_BYTES: [${Array.from(apiCorrectedText).map(c => c.charCodeAt(0)).join(',')}]`);
-
                     // 重新获取当前段落在文档中的实际位置
-                    const currentRange = this.findParagraphInCurrentDocument(editor, paraInfo.content, i);
-                    console.log(`RANGE_FOUND: L${currentRange.start.line + 1}-L${currentRange.end.line + 1}`);
+                    const currentRange = this.findParagraphInCurrentDocument(currentEditor, paraInfo.content, i);
                     const paragraphId = `${paraInfo.startLine}-${paraInfo.endLine}`;
 
                     // 获取当前实际的行结构（基于找到的位置）
                     const originalLines = [];
                     for (let lineIndex = currentRange.start.line; lineIndex <= currentRange.end.line; lineIndex++) {
-                        originalLines.push(editor.document.lineAt(lineIndex).text);
+                        originalLines.push(currentEditor.document.lineAt(lineIndex).text);
                     }
-                    const actualContent = originalLines.join('\n');
-                    console.log(`ACTUAL_DOC_CONTENT: "${actualContent}"`);
 
                     if (apiCorrectedText !== paraInfo.content) {
-                        console.log(`APPLYING_CHANGE: L${currentRange.start.line + 1}-L${currentRange.end.line + 1}`);
-
                         // 1. 应用修改到编辑器
-                        await this.applyCorrectionToEditor(editor, {
+                        await this.applyCorrectionToEditor(currentEditor, {
                             content: paraInfo.content,
                             startLine: currentRange.start.line,
                             endLine: currentRange.end.line
@@ -212,7 +255,6 @@ export class CorrectionService {
 
                         // 2. 重新计算修改后的range（基于新的文档状态）
                         const newRange = this.calculateRangeAfterReplacement(currentRange, apiCorrectedText);
-                        console.log(`NEW_RANGE: L${newRange.start.line + 1}-L${newRange.end.line + 1}`);
 
                         // 3. 创建 ParagraphCorrection 对象
                         const correctionEntry: ParagraphCorrection = {
@@ -223,48 +265,47 @@ export class CorrectionService {
                             status: ParagraphStatus.Pending,
                             originalLines: originalLines,
                         };
-                        this.paragraphCorrections.push(correctionEntry);
+                        this.editorStateManager.addParagraphCorrection(currentEditor, correctionEntry);
 
-                        // 4. 告诉 DiffManager 添加差异高亮
+                        // 4. 告诉 DiffManager 添加差异高亮到正确的编辑器
                         if (this.diffManager) {
-                            this.diffManager.addChange(newRange, paraInfo.content, apiCorrectedText);
+                            this.diffManager.addChange(newRange, paraInfo.content, apiCorrectedText, currentEditor);
                         }
 
                         // 5. 立即更新后续段落的range（因为当前段落的行数可能发生了变化）
-                        this.updateSubsequentParagraphRanges(correctionEntry, editor);
-
-                        console.log(`PARAGRAPH_${i + 1}_DONE: CHANGED`);
-
-                        // 6. 打印修改后的编辑器状态
-                        this.printEditorContent(editor, `AFTER_PARAGRAPH_${i + 1}`);
-                    } else {
-                        // 文本没有变化，说明原文正确，不需要任何操作
-                        console.log(`PARAGRAPH_${i + 1}_DONE: CORRECT_NO_ACTION_NEEDED`);
-                        // 注意：不添加到 paragraphCorrections 数组中，这样就不会显示接受/拒绝按钮
+                        this.updateSubsequentParagraphRanges(correctionEntry, currentEditor);
                     }
 
                 } catch (error) {
-                    vscode.window.showErrorMessage(`段落 ${i + 1} 纠错失败: ${error instanceof Error ? error.message : String(error)}`);
                     // 记录失败的段落信息
-                    const currentRange = this.findParagraphInCurrentDocument(editor, paraInfo.content, i);
+                    const currentRange = this.findParagraphInCurrentDocument(currentEditor, paraInfo.content, i);
                     const paragraphId = `${paraInfo.startLine}-${paraInfo.endLine}`;
 
                     // 获取原始行结构（即使API失败也需要保存）
                     const originalLines = [];
                     for (let lineIndex = currentRange.start.line; lineIndex <= currentRange.end.line; lineIndex++) {
-                        originalLines.push(editor.document.lineAt(lineIndex).text);
+                        originalLines.push(currentEditor.document.lineAt(lineIndex).text);
                     }
 
-                    this.paragraphCorrections.push({
+                    this.editorStateManager.addParagraphCorrection(currentEditor, {
                         id: paragraphId,
                         originalText: paraInfo.content,
                         correctedText: null, // API error
                         range: currentRange,
-                        status: ParagraphStatus.Pending, // Or a new status like 'ApiError'
+                        status: ParagraphStatus.Error, // 使用错误状态
                         originalLines: originalLines,
+                        errorMessage: "纠错失败" // 简化错误信息
                     });
                 }
             }
+        }
+
+        // 标记纠错完成
+        const finalEditor = this.editorStateManager.getValidEditor(editorUri);
+        if (finalEditor) {
+            this.editorStateManager.updateEditorState(finalEditor, {
+                isCorrectingInProgress: false
+            });
         }
 
         this._onDidChangeParagraphCorrections.fire(); // 所有段落处理完毕，触发 CodeLens 更新
@@ -272,9 +313,13 @@ export class CorrectionService {
         if (this.diffManager && this.diffManager.hasChanges()) {
             // 考虑是否还需要全局按钮，或者仅依赖段落按钮
             // this.diffManager.showGlobalActionButtons();
-            vscode.window.showInformationMessage("段落纠错完成，请使用段落旁的按钮进行接受或拒绝操作。");
-        } else if (!this.isCancelled) {
-            vscode.window.showInformationMessage("文本纠错完成，未发现需要修改的内容。");
+            vscode.window.showInformationMessage(`文档 "${editorUri.split('/').pop()}" 纠错完成，请使用段落旁的按钮进行接受或拒绝操作。`);
+        } else {
+            // 检查是否被取消
+            const finalState = this.editorStateManager.getEditorState(editor);
+            if (!finalState.isCancelled) {
+                vscode.window.showInformationMessage(`文档 "${editorUri.split('/').pop()}" 纠错完成，未发现需要修改的内容。`);
+            }
         }
     }
 
@@ -307,7 +352,45 @@ export class CorrectionService {
     // }
 
     public cancelCorrection(): void {
-        this.isCancelled = true;
+        // 这个方法现在主要由 extension.ts 中的取消命令处理
+        // 保留此方法以保持向后兼容性
+    }
+
+    /**
+     * 恢复暂停的纠错过程
+     */
+    public async resumeCorrection(editor: vscode.TextEditor): Promise<void> {
+        const state = this.editorStateManager.getEditorState(editor);
+        if (state.isCorrectingInProgress) {
+            console.log('Resuming correction for editor:', editor.document.uri.toString());
+            // 重新开始纠错过程
+            await this.correctFullText(editor);
+        }
+    }
+
+    /**
+     * 保存文件
+     */
+    private async saveFile(editor: vscode.TextEditor): Promise<void> {
+        try {
+            await editor.document.save();
+        } catch (error) {
+            console.error('Failed to save file:', error);
+            vscode.window.showErrorMessage(`保存文件失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    /**
+     * 触发状态栏更新
+     */
+    private triggerStatusBarUpdate(): void {
+        // 触发状态变化事件，让extension.ts更新状态栏
+        this._onDidChangeParagraphCorrections.fire();
+
+        // 延迟触发，确保状态变化被处理
+        setTimeout(() => {
+            this._onDidChangeParagraphCorrections.fire();
+        }, 100);
     }
 
     private splitIntoParagraphs(text: string): Array<{ content: string, startLine: number, endLine: number }> {
@@ -350,11 +433,7 @@ export class CorrectionService {
             });
         }
 
-        console.log(`SPLIT_PARAGRAPHS_DEBUG:`, paragraphs.map(p => ({
-            content: p.content,
-            lines: `L${p.startLine + 1}-L${p.endLine + 1}`,
-            bytes: Array.from(p.content).map(c => c.charCodeAt(0))
-        })));
+        // 简化日志输出
 
         return paragraphs;
     }
@@ -365,8 +444,6 @@ export class CorrectionService {
 
         // 构建发送给API的完整prompt
         const fullPrompt = config.prompt.replace('{user_content}', text);
-
-        console.log(`API_SEND: "${text}"`);
 
         try {
             const requestPayload = {
@@ -393,30 +470,21 @@ export class CorrectionService {
             );
 
             const responseContent = response.data.choices[0].message.content.trim();
-            console.log(`API_RAW_RESPONSE: "${responseContent}"`);
 
             try {
                 const jsonContent = this.extractJsonFromResponse(responseContent);
                 const correctionResult: CorrectionResponse = JSON.parse(jsonContent);
 
-                console.log(`API_PARSED_RESULT: ${correctionResult.result}`);
-                console.log(`API_CORRECTED_TEXT: "${correctionResult.corrected_text}"`);
-
                 // 如果没有错误（result为true），返回原文本
                 if (correctionResult.result === true || correctionResult.corrected_text === null) {
-                    console.log(`API_FINAL_RETURN: "${text}" (no change)`);
                     return text;
                 }
 
                 // 如果有错误，返回纠正后的文本
-                const finalResult = correctionResult.corrected_text || text;
-                console.log(`API_FINAL_RETURN: "${finalResult}" (changed)`);
-                return finalResult;
+                return correctionResult.corrected_text || text;
 
             } catch (parseError) {
-                console.error(`API_PARSE_ERROR:`, parseError instanceof Error ? parseError.message : String(parseError));
-                console.error(`API_RAW_CONTENT:`, responseContent);
-                console.log(`API_FINAL_RETURN: "${text}" (parse failed)`);
+                console.error(`API parse error:`, parseError instanceof Error ? parseError.message : String(parseError));
                 return text;
             }
 
@@ -463,6 +531,11 @@ export class CorrectionService {
         paragraph: { content: string, startLine: number, endLine: number },
         correctedText: string
     ): Promise<void> {
+        // 验证编辑器是否仍然有效
+        if (!this.editorStateManager.isEditorValid(editor)) {
+            throw new Error('Editor is no longer valid');
+        }
+
         const document = editor.document;
         const startPos = new vscode.Position(paragraph.startLine, 0);
 
@@ -483,9 +556,28 @@ export class CorrectionService {
         const finalText = (paragraph.endLine < document.lineCount - 1) ?
             correctedText + '\n' : correctedText;
 
-        await editor.edit(editBuilder => {
-            editBuilder.replace(range, finalText);
-        });
+        try {
+            // 使用WorkspaceEdit进行更可靠的编辑，即使编辑器不可见也能工作
+            const workspaceEdit = new vscode.WorkspaceEdit();
+            workspaceEdit.replace(document.uri, range, finalText);
+
+            const success = await vscode.workspace.applyEdit(workspaceEdit);
+
+            if (!success) {
+                // 如果WorkspaceEdit失败，回退到直接编辑器操作
+                console.warn('WorkspaceEdit failed, falling back to direct editor edit');
+                const editorSuccess = await editor.edit(editBuilder => {
+                    editBuilder.replace(range, finalText);
+                });
+
+                if (!editorSuccess) {
+                    throw new Error('Both WorkspaceEdit and direct editor edit failed');
+                }
+            }
+        } catch (error) {
+            console.error('Error in applyCorrectionToEditor:', error);
+            throw new Error(`TextEditor edit failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
     }
 
     /**
@@ -505,50 +597,29 @@ export class CorrectionService {
         const normalizedTargetContent = targetContent.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         const targetLines = normalizedTargetContent.split('\n');
 
-        console.log(`FIND_PARAGRAPH_${paragraphIndex}_DEBUG:`);
-        console.log(`  TARGET_CONTENT: "${normalizedTargetContent}"`);
-        console.log(`  TARGET_LINES:`, targetLines);
-        console.log(`  DOC_TOTAL_LINES: ${lines.length}`);
-
         // 如果是第一个段落，从文档开头开始查找
         let searchStartLine = 0;
-
-        // 对于后续段落，从前一个段落的结束位置开始查找
-        if (paragraphIndex > 0 && this.paragraphCorrections.length > 0) {
-            const lastProcessedParagraph = this.paragraphCorrections[this.paragraphCorrections.length - 1];
-            searchStartLine = lastProcessedParagraph.range.end.line + 1;
-            console.log(`  SEARCH_START_LINE: ${searchStartLine + 1} (after previous paragraph)`);
-        } else {
-            console.log(`  SEARCH_START_LINE: ${searchStartLine + 1} (first paragraph)`);
-        }
 
         // 从搜索起始位置开始查找匹配的段落
         for (let startLine = searchStartLine; startLine < lines.length; startLine++) {
             // 跳过空行
             if (lines[startLine].trim() === '') continue;
 
-            console.log(`  CHECKING_LINE_${startLine + 1}: "${lines[startLine]}"`);
-
             // 检查是否匹配第一行
             if (lines[startLine] === targetLines[0]) {
-                console.log(`  FIRST_LINE_MATCH at L${startLine + 1}`);
-
                 // 检查是否完全匹配整个段落
                 let matches = true;
                 let endLine = startLine;
 
                 for (let i = 0; i < targetLines.length && startLine + i < lines.length; i++) {
-                    console.log(`    COMPARE L${startLine + i + 1}: "${lines[startLine + i]}" vs "${targetLines[i]}"`);
                     if (lines[startLine + i] !== targetLines[i]) {
                         matches = false;
-                        console.log(`    MISMATCH at line ${i}`);
                         break;
                     }
                     endLine = startLine + i;
                 }
 
                 if (matches) {
-                    console.log(`  EXACT_MATCH_FOUND: L${startLine + 1}-L${endLine + 1}`);
                     return new vscode.Range(
                         new vscode.Position(startLine, 0),
                         new vscode.Position(endLine, lines[endLine].length)
@@ -598,11 +669,7 @@ export class CorrectionService {
         const newEndLine = startPos.line + newLines.length - 1;
         const newEndChar = newLines.length > 0 ? newLines[newLines.length - 1].length : 0;
 
-        console.log(`CALCULATE_NEW_RANGE_DEBUG:`);
-        console.log(`  ORIGINAL_RANGE: L${originalRange.start.line + 1}-L${originalRange.end.line + 1}`);
-        console.log(`  NEW_TEXT_LINES: ${newLines.length}`);
-        console.log(`  NEW_TEXT_CONTENT: "${newText}"`);
-        console.log(`  CALCULATED_NEW_RANGE: L${startPos.line + 1}-L${newEndLine + 1}`);
+        // 简化日志输出
 
         return new vscode.Range(
             startPos,
@@ -614,15 +681,9 @@ export class CorrectionService {
      * 更新后续段落的range，当某个段落被修改后调用
      */
     private updateSubsequentParagraphRanges(changedParagraph: ParagraphCorrection, editor: vscode.TextEditor): void {
-        const changedIndex = this.paragraphCorrections.indexOf(changedParagraph);
-        if (changedIndex === -1) return;
-
-        console.log(`UPDATE_SUBSEQUENT_RANGES: starting from paragraph ${changedIndex + 1}`);
-
+        // TODO: 需要重构这个方法来使用EditorStateManager
         // 重新计算所有段落的位置，使用更智能的方法
         this.recalculateAllParagraphRanges(editor);
-
-        console.log(`UPDATE_SUBSEQUENT_RANGES_COMPLETED`);
     }
 
     /**
@@ -630,26 +691,19 @@ export class CorrectionService {
      * 这个方法会重新扫描整个文档来定位每个段落
      */
     private recalculateAllParagraphRanges(editor: vscode.TextEditor): void {
-        console.log(`RECALCULATE_ALL_RANGES: starting`);
-
         const document = editor.document;
         const normalizedDocText = document.getText().replace(/\r\n/g, '\n').replace(/\r/g, '\n');
         const docLines = normalizedDocText.split('\n');
 
-        console.log(`  CURRENT_DOC_LINES: ${docLines.length}`);
-        docLines.forEach((line, index) => {
-            console.log(`    L${index + 1}: "${line}"`);
-        });
-
         // 为每个段落重新查找位置
         let currentSearchLine = 0;
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
 
-        for (let i = 0; i < this.paragraphCorrections.length; i++) {
-            const paragraph = this.paragraphCorrections[i];
+        for (let i = 0; i < corrections.length; i++) {
+            const paragraph = corrections[i];
 
             // 跳过已拒绝的段落，它们不需要重新计算范围
             if (paragraph.status === ParagraphStatus.Rejected) {
-                console.log(`  RECALC_PARAGRAPH_${i}: SKIPPED (already rejected)`);
                 continue;
             }
 
@@ -657,12 +711,6 @@ export class CorrectionService {
             const targetText = paragraph.correctedText || paragraph.originalText;
             const normalizedTargetText = targetText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
             const targetLines = normalizedTargetText.split('\n');
-
-            console.log(`  RECALC_PARAGRAPH_${i}:`);
-            console.log(`    STATUS: ${paragraph.status}`);
-            console.log(`    SEARCHING_FOR_CORRECTED_TEXT: "${normalizedTargetText}"`);
-            console.log(`    TARGET_LINES:`, targetLines);
-            console.log(`    SEARCH_FROM: L${currentSearchLine + 1}`);
 
             // 从当前搜索位置开始查找纠正后的文本
             let found = false;
@@ -688,26 +736,19 @@ export class CorrectionService {
                         // 更精确地计算范围，考虑实际的文本内容
                         const newRange = this.calculatePreciseRange(document, startLine, endLine, targetLines);
 
-                        console.log(`    FOUND_CORRECTED_TEXT_AT: L${startLine + 1}-L${endLine + 1}`);
-                        console.log(`    OLD_RANGE: L${paragraph.range.start.line + 1}-L${paragraph.range.end.line + 1}`);
-                        console.log(`    NEW_PRECISE_RANGE: L${newRange.start.line + 1}:${newRange.start.character}-L${newRange.end.line + 1}:${newRange.end.character}`);
-
                         paragraph.range = newRange;
                         currentSearchLine = endLine + 1; // 下次从这个段落后面开始搜索
                         found = true;
 
                         // 同时更新DiffManager中对应的ChangeInfo
                         if (this.diffManager) {
-                            const changes = (this.diffManager as any).changes as ChangeInfo[];
-                            if (changes) {
-                                const changeInfo = changes.find(change =>
-                                    change.original === paragraph.originalText &&
-                                    change.corrected === paragraph.correctedText
-                                );
-                                if (changeInfo) {
-                                    console.log(`    UPDATED_DIFFMANAGER: L${newRange.start.line + 1}:${newRange.start.character}-L${newRange.end.line + 1}:${newRange.end.character}`);
-                                    changeInfo.range = newRange;
-                                }
+                            const changes = this.editorStateManager.getChanges(editor);
+                            const changeInfo = changes.find(change =>
+                                change.original === paragraph.originalText &&
+                                change.corrected === paragraph.correctedText
+                            );
+                            if (changeInfo) {
+                                changeInfo.range = newRange;
                             }
                         }
                         break;
@@ -720,7 +761,7 @@ export class CorrectionService {
             }
         }
 
-        console.log(`RECALCULATE_ALL_RANGES_COMPLETED`);
+        // 简化日志输出
     }
 
     /**
@@ -732,8 +773,6 @@ export class CorrectionService {
         endLine: number,
         targetLines: string[]
     ): vscode.Range {
-        console.log(`CALCULATE_PRECISE_RANGE: L${startLine + 1}-L${endLine + 1}`);
-
         // 对于单行段落，计算精确的字符范围
         if (targetLines.length === 1) {
             const lineText = document.lineAt(startLine).text;
@@ -743,7 +782,6 @@ export class CorrectionService {
             const startChar = lineText.indexOf(targetText);
             if (startChar !== -1) {
                 const endChar = startChar + targetText.length;
-                console.log(`  SINGLE_LINE_PRECISE: L${startLine + 1}:${startChar}-${endChar}`);
                 return new vscode.Range(
                     new vscode.Position(startLine, startChar),
                     new vscode.Position(startLine, endChar)
@@ -775,7 +813,7 @@ export class CorrectionService {
             endChar = lastLineText.length;
         }
 
-        console.log(`  MULTI_LINE_PRECISE: L${actualStartLine + 1}:${startChar}-L${actualEndLine + 1}:${endChar}`);
+        // 简化日志输出
 
         return new vscode.Range(
             new vscode.Position(actualStartLine, startChar),
@@ -785,16 +823,18 @@ export class CorrectionService {
 
     // --- 新增段落级操作方法 ---
 
-    public getParagraphCorrectionById(id: ParagraphIdentifier): ParagraphCorrection | undefined {
-        return this.paragraphCorrections.find(pc => pc.id === id);
+    public getParagraphCorrectionById(id: ParagraphIdentifier, editor: vscode.TextEditor): ParagraphCorrection | undefined {
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
+        return corrections.find(pc => pc.id === id);
     }
 
-    public getParagraphCorrections(): ParagraphCorrection[] {
-        return this.paragraphCorrections;
+    public getParagraphCorrections(editor: vscode.TextEditor): ParagraphCorrection[] {
+        return this.editorStateManager.getParagraphCorrections(editor);
     }
 
-    public getPendingParagraphCorrections(): ParagraphCorrection[] {
-        return this.paragraphCorrections.filter(pc =>
+    public getPendingParagraphCorrections(editor: vscode.TextEditor): ParagraphCorrection[] {
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
+        return corrections.filter(pc =>
             pc.status === ParagraphStatus.Pending &&
             pc.correctedText !== null && // 有纠错结果
             pc.originalText !== pc.correctedText // 且与原文不同
@@ -803,11 +843,26 @@ export class CorrectionService {
 
     private findChangeInfoForParagraph(paragraph: ParagraphCorrection): ChangeInfo | undefined {
         if (!this.diffManager) return undefined;
-        // DiffManager 的 changes 数组是私有的，我们需要一种方式来获取它
-        // 或者 DiffManager 提供一个按 range 查找 ChangeInfo 的方法
-        // 假设 DiffManager.getChanges() 存在或我们可以修改它来暴露
-        const changes = (this.diffManager as any).changes as ChangeInfo[]; // Type assertion for now
-        if (!changes) return undefined;
+
+        // 需要找到包含这个段落的编辑器
+        let targetEditor: vscode.TextEditor | undefined;
+
+        // 遍历所有可见编辑器，找到包含这个段落的编辑器
+        for (const editor of vscode.window.visibleTextEditors) {
+            const corrections = this.editorStateManager.getParagraphCorrections(editor);
+            if (corrections.includes(paragraph)) {
+                targetEditor = editor;
+                break;
+            }
+        }
+
+        if (!targetEditor) {
+            targetEditor = this.editorStateManager.getValidEditor();
+        }
+
+        if (!targetEditor) return undefined;
+
+        const changes = this.editorStateManager.getChanges(targetEditor);
 
         return changes.find(change =>
             change.range.isEqual(paragraph.range) &&
@@ -817,7 +872,7 @@ export class CorrectionService {
     }
 
     public async acceptParagraph(paragraphId: ParagraphIdentifier, editor: vscode.TextEditor): Promise<void> {
-        const paragraph = this.getParagraphCorrectionById(paragraphId);
+        const paragraph = this.getParagraphCorrectionById(paragraphId, editor);
         if (!paragraph || paragraph.status !== ParagraphStatus.Pending || !this.diffManager) {
             return;
         }
@@ -825,9 +880,17 @@ export class CorrectionService {
         const changeInfo = this.findChangeInfoForParagraph(paragraph);
         if (changeInfo) {
             // DiffManager.acceptSingleChange 应该会处理编辑器的文本更新和移除 diff
-            (this.diffManager as any).acceptSingleChange(changeInfo); // Use 'any' if method is private or not directly accessible
+            await (this.diffManager as any).acceptSingleChange(changeInfo); // Use 'any' if method is private or not directly accessible
             paragraph.status = ParagraphStatus.Accepted;
             this._onDidChangeParagraphCorrections.fire();
+
+        // 触发状态栏更新
+        this.triggerStatusBarUpdate();
+
+        // 强制更新装饰，确保被接受的段落装饰被清除
+        if (this.diffManager) {
+            this.diffManager.updateDecorationsForEditor(editor);
+        }
 
             // 打印接受后的编辑器状态
             this.printEditorContent(editor, `AFTER_ACCEPT_${paragraphId}`);
@@ -850,45 +913,56 @@ export class CorrectionService {
         }
     }
 
-    public async rejectParagraph(paragraphId: ParagraphIdentifier, editor: vscode.TextEditor): Promise<void> {
-        console.log(`\n=== REJECT_PARAGRAPH: ${paragraphId} ===`);
-
-        const paragraph = this.getParagraphCorrectionById(paragraphId);
-        if (!paragraph || paragraph.status !== ParagraphStatus.Pending || !this.diffManager) {
-            console.log(`REJECT_FAILED: paragraph not found or invalid status`);
+    /**
+     * 关闭错误提示
+     */
+    public async dismissError(paragraphId: ParagraphIdentifier, editor: vscode.TextEditor): Promise<void> {
+        const paragraph = this.getParagraphCorrectionById(paragraphId, editor);
+        if (!paragraph || paragraph.status !== ParagraphStatus.Error) {
             return;
         }
 
-        console.log(`REJECT_ORIGINAL: "${paragraph.originalText}"`);
-        console.log(`REJECT_CORRECTED: "${paragraph.correctedText}"`);
-        console.log(`REJECT_RANGE: L${paragraph.range.start.line + 1}-L${paragraph.range.end.line + 1}`);
+        // 从段落纠正列表中移除错误段落
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
+        const index = corrections.indexOf(paragraph);
+        if (index > -1) {
+            corrections.splice(index, 1);
+            this.editorStateManager.setParagraphCorrections(editor, corrections);
+        }
+
+        this._onDidChangeParagraphCorrections.fire();
+        this.triggerStatusBarUpdate();
+    }
+
+    public async rejectParagraph(paragraphId: ParagraphIdentifier, editor: vscode.TextEditor): Promise<void> {
+        const paragraph = this.getParagraphCorrectionById(paragraphId, editor);
+        if (!paragraph || paragraph.status !== ParagraphStatus.Pending || !this.diffManager) {
+            return;
+        }
 
         // 检查是否有换行变化
         const originalLineCount = paragraph.originalText.split('\n').length;
         const correctedLineCount = (paragraph.correctedText || '').split('\n').length;
         const hasLineCountChange = originalLineCount !== correctedLineCount;
 
-        console.log(`ORIGINAL_LINES: ${originalLineCount}, CORRECTED_LINES: ${correctedLineCount}, HAS_LINE_CHANGE: ${hasLineCountChange}`);
-
         const changeInfo = this.findChangeInfoForParagraph(paragraph);
 
         if (changeInfo && !hasLineCountChange) {
             // 没有换行变化，可以安全使用DiffManager的方法（不会闪烁）
-            console.log(`REJECT_VIA_DIFFMANAGER (no line change)`);
             (this.diffManager as any).rejectSingleChange(changeInfo);
             paragraph.status = ParagraphStatus.Rejected;
             this._onDidChangeParagraphCorrections.fire();
 
-            // 打印拒绝后的编辑器状态
-            this.printEditorContent(editor, `AFTER_REJECT_${paragraphId}`);
+            // 触发状态栏更新
+            this.triggerStatusBarUpdate();
         } else {
             // 有换行变化或找不到ChangeInfo，使用文档重构方法
-            console.log(`REJECT_VIA_RECONSTRUCTION (line change or no ChangeInfo)`);
+            console.log(`Rejecting paragraph ${paragraphId} via document reconstruction`);
 
             // 先移除DiffManager中的change，避免干扰
             if (changeInfo) {
                 try {
-                    (this.diffManager as any).removeChangeFromList?.(changeInfo);
+                    (this.diffManager as any).removeChangeFromList?.(changeInfo, editor);
                 } catch (error) {
                     console.warn(`Failed to remove DiffManager change:`, error);
                 }
@@ -897,54 +971,63 @@ export class CorrectionService {
             await this.rejectParagraphByDocumentReconstruction(editor, paragraph);
             paragraph.status = ParagraphStatus.Rejected;
 
-            // 只更新其他段落的范围，避免完全重建装饰
-            this.updateOtherParagraphRanges(editor, paragraph);
+            // 文档重构后，需要完全重建DiffManager的状态
+            await this.rebuildDiffManagerAfterDocumentReconstruction(editor);
 
             this._onDidChangeParagraphCorrections.fire();
 
-            // 打印拒绝后的编辑器状态
-            this.printEditorContent(editor, `AFTER_REJECT_RECONSTRUCTION_${paragraphId}`);
+            // 触发状态栏更新
+            this.triggerStatusBarUpdate();
+        }
+    }
+
+    /**
+     * 文档重构后重建DiffManager状态
+     */
+    private async rebuildDiffManagerAfterDocumentReconstruction(editor: vscode.TextEditor): Promise<void> {
+        if (!this.diffManager) {
+            return;
         }
 
-        console.log(`REJECT_DONE`);
+        // 1. 清除所有现有的装饰和changes
+        this.diffManager.clearDecorationsForEditor(editor);
+        this.editorStateManager.setChanges(editor, []);
+
+        // 2. 重新计算所有段落的范围
+        this.recalculateAllParagraphRanges(editor);
+
+        // 3. 为仍然处于Pending状态的段落重新创建ChangeInfo
+        const corrections = this.editorStateManager.getParagraphCorrections(editor);
+        const pendingCorrections = corrections.filter(p => p.status === ParagraphStatus.Pending);
+
+        for (const paragraph of pendingCorrections) {
+            if (paragraph.correctedText && paragraph.correctedText !== paragraph.originalText) {
+                // 重新添加change到DiffManager
+                this.diffManager.addChange(
+                    paragraph.range,
+                    paragraph.originalText,
+                    paragraph.correctedText,
+                    editor
+                );
+            }
+        }
+
+        // 4. 强制更新装饰
+        this.diffManager.updateDecorationsForEditor(editor);
     }
 
     /**
      * 更新其他段落的范围，避免完全重建装饰
      */
     private updateOtherParagraphRanges(editor: vscode.TextEditor, rejectedParagraph: ParagraphCorrection): void {
-        console.log(`UPDATE_OTHER_PARAGRAPH_RANGES: starting`);
-
         // 只重新计算所有段落的范围
         this.recalculateAllParagraphRanges(editor);
 
         // 只更新DiffManager中其他段落的装饰位置
         if (this.diffManager) {
-            console.log(`UPDATING_OTHER_PARAGRAPH_DECORATIONS`);
-
-            const changes = (this.diffManager as any).changes as ChangeInfo[];
-            if (changes) {
-                // 为每个现有的change更新范围（跳过已拒绝的段落）
-                for (const change of changes) {
-                    const matchingParagraph = this.paragraphCorrections.find(p =>
-                        p.originalText === change.original &&
-                        p.correctedText === change.corrected &&
-                        p.status === ParagraphStatus.Pending &&
-                        p.id !== rejectedParagraph.id // 跳过刚拒绝的段落
-                    );
-
-                    if (matchingParagraph) {
-                        console.log(`UPDATING_OTHER_CHANGE_RANGE: L${change.range.start.line + 1}-L${change.range.end.line + 1} -> L${matchingParagraph.range.start.line + 1}-L${matchingParagraph.range.end.line + 1}`);
-                        change.range = matchingParagraph.range;
-                    }
-                }
-
-                // 只更新装饰，不重建
-                (this.diffManager as any).updateDecorations?.();
-            }
+            // 强制更新装饰
+            this.diffManager.updateDecorationsForEditor(editor);
         }
-
-        console.log(`UPDATE_OTHER_PARAGRAPH_RANGES_COMPLETED`);
     }
 
     /**
@@ -1065,12 +1148,27 @@ export class CorrectionService {
                     currentDocument.lineAt(currentDocument.lineCount - 1).text.length)
             );
 
-            editResult = await editor.edit(editBuilder => {
-                editBuilder.replace(fullRange, newFullText);
-            }, {
-                undoStopBefore: true,
-                undoStopAfter: true
-            });
+            try {
+                // 优先使用WorkspaceEdit进行更可靠的编辑
+                const workspaceEdit = new vscode.WorkspaceEdit();
+                workspaceEdit.replace(currentDocument.uri, fullRange, newFullText);
+
+                editResult = await vscode.workspace.applyEdit(workspaceEdit);
+
+                if (!editResult) {
+                    // 如果WorkspaceEdit失败，回退到直接编辑器操作
+                    console.warn(`WorkspaceEdit failed on attempt ${retryCount}, falling back to direct editor edit`);
+                    editResult = await editor.edit(editBuilder => {
+                        editBuilder.replace(fullRange, newFullText);
+                    }, {
+                        undoStopBefore: true,
+                        undoStopAfter: true
+                    });
+                }
+            } catch (error) {
+                console.warn(`Edit attempt ${retryCount} failed:`, error);
+                editResult = false;
+            }
 
             console.log(`EDIT_ATTEMPT_${retryCount}_RESULT: ${editResult}`);
 

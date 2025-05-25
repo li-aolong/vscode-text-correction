@@ -4,31 +4,28 @@ import { CostCalculator } from './services/costCalculator';
 import { CorrectionService, ParagraphIdentifier, ParagraphStatus } from './services/correctionService';
 import { DiffManager } from './diff/diffManager';
 import { ParagraphCodeLensProvider } from './providers/paragraphCodeLensProvider';
+import { EditorStateManager } from './services/editorStateManager';
+import { StatusBarManager } from './ui/statusBarManager';
 
-let statusBarItem: vscode.StatusBarItem;
-let correctionStatusBarItem: vscode.StatusBarItem;
-let cancelStatusBarItem: vscode.StatusBarItem;
-let acceptAllStatusBarItem: vscode.StatusBarItem;
-let rejectAllStatusBarItem: vscode.StatusBarItem;
 let configManager: ConfigManager;
 let costCalculator: CostCalculator;
 let correctionService: CorrectionService;
 let diffManager: DiffManager;
-let isCorrectingInProgress = false;
+let editorStateManager: EditorStateManager;
+let statusBarManager: StatusBarManager;
 
 export function activate(context: vscode.ExtensionContext) {
     // 初始化服务
     configManager = new ConfigManager();
     costCalculator = new CostCalculator(configManager);
-    correctionService = new CorrectionService(configManager);
-    diffManager = new DiffManager();
+    editorStateManager = new EditorStateManager();
+    statusBarManager = new StatusBarManager(editorStateManager, costCalculator);
+    correctionService = new CorrectionService(configManager, editorStateManager);
+    diffManager = new DiffManager(editorStateManager);
 
     // 设置服务间的双向关联
     correctionService.setDiffManager(diffManager);
     diffManager.setCorrectionService(correctionService);
-
-    // 创建状态栏项目
-    createStatusBarItems();
 
     // 注册命令
     registerCommands(context);
@@ -46,84 +43,53 @@ export function activate(context: vscode.ExtensionContext) {
     registerEventListeners(context);
 
     // 初始更新状态栏
-    updateStatusBar();
-    updateCorrectionActionButtonsVisibility(); // 更新新增按钮的可见性
+    updateStatusBarForCurrentEditor();
 }
 
-function createStatusBarItems() {
-    // 费用预估状态栏
-    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
-    statusBarItem.show();
 
-    // 纠错按钮状态栏
-    correctionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 4);
-    correctionStatusBarItem.text = "$(pencil) 全文纠错";
-    correctionStatusBarItem.command = 'textCorrection.correctFullText';
-    correctionStatusBarItem.show();
-
-    // 取消按钮状态栏（初始隐藏）
-    cancelStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 3);
-    cancelStatusBarItem.text = "$(x)";
-    cancelStatusBarItem.command = 'textCorrection.cancelCorrection';
-    cancelStatusBarItem.tooltip = "取消纠错";
-
-    // 接受全部按钮状态栏（初始隐藏）
-    acceptAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 2);
-    acceptAllStatusBarItem.text = "$(check-all) 全接受";
-    acceptAllStatusBarItem.command = 'textCorrection.acceptAllChanges';
-    acceptAllStatusBarItem.tooltip = "接受所有更改";
-    acceptAllStatusBarItem.hide();
-
-    // 拒绝全部按钮状态栏（初始隐藏）
-    rejectAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1);
-    rejectAllStatusBarItem.text = "$(close-all) 全拒绝";
-    rejectAllStatusBarItem.command = 'textCorrection.rejectAllChanges';
-    rejectAllStatusBarItem.tooltip = "拒绝所有更改";
-    rejectAllStatusBarItem.hide();
-}
 
 function registerCommands(context: vscode.ExtensionContext) {
     // 全文纠错命令
     const correctFullTextCommand = vscode.commands.registerCommand('textCorrection.correctFullText', async () => {
-        if (isCorrectingInProgress) {
-            return; // 正在纠错时不响应点击
-        }
-
         const editor = vscode.window.activeTextEditor;
         if (!editor) {
             vscode.window.showErrorMessage('没有打开的编辑器');
             return;
         }
 
-        isCorrectingInProgress = true;
-        correctionStatusBarItem.command = undefined; // 禁用命令
-        correctionStatusBarItem.text = "$(loading~spin) 纠错中...";
-        cancelStatusBarItem.show();
+        if (editorStateManager.isCorrectingInProgress(editor)) {
+            return; // 正在纠错时不响应点击
+        }
+
+        editorStateManager.updateEditorState(editor, { isCorrectingInProgress: true });
+        updateStatusBarForCurrentEditor();
 
         try {
             await correctionService.correctFullText(editor, (current: number, total: number) => {
-                // 进度回调
-                correctionStatusBarItem.text = `$(loading~spin) 纠错中...(${current}/${total})`;
+                // 进度回调 - 立即更新状态栏
+                statusBarManager.updateCorrectionProgress(editor, current, total);
+                // 强制刷新状态栏显示
+                updateStatusBarForCurrentEditor();
             });
         } catch (error) {
             vscode.window.showErrorMessage(`纠错失败: ${error}`);
         } finally {
-            isCorrectingInProgress = false;
-            correctionStatusBarItem.text = "$(pencil) 全文纠错";
-            correctionStatusBarItem.command = 'textCorrection.correctFullText';
-            cancelStatusBarItem.hide();
-            updateCorrectionActionButtonsVisibility(); // 更新“接受全部”/“拒绝全部”按钮的可见性
+            editorStateManager.updateEditorState(editor, { isCorrectingInProgress: false });
+            updateStatusBarForCurrentEditor();
         }
     });
 
     // 取消纠错命令
     const cancelCorrectionCommand = vscode.commands.registerCommand('textCorrection.cancelCorrection', () => {
-        if (isCorrectingInProgress) {
-            correctionService.cancelCorrection();
-            isCorrectingInProgress = false;
-            correctionStatusBarItem.text = "$(pencil) 全文纠错";
-            correctionStatusBarItem.command = 'textCorrection.correctFullText';
-            cancelStatusBarItem.hide();
+        const editor = vscode.window.activeTextEditor;
+        if (editor && editorStateManager.isCorrectingInProgress(editor)) {
+            // 标记当前编辑器的纠错为已取消
+            editorStateManager.updateEditorState(editor, {
+                isCancelled: true,
+                isCorrectingInProgress: false
+            });
+            updateStatusBarForCurrentEditor();
+            vscode.window.showInformationMessage('纠错操作已取消');
         }
     });
 
@@ -133,8 +99,9 @@ function registerCommands(context: vscode.ExtensionContext) {
         if (editor) {
             // 使用CorrectionService的智能全部接受方法
             await correctionService.acceptAllPendingParagraphs(editor);
+            // 强制更新状态栏
+            setTimeout(() => updateStatusBarForCurrentEditor(), 100);
         }
-        updateCorrectionActionButtonsVisibility();
     });
 
     const rejectAllCommand = vscode.commands.registerCommand('textCorrection.rejectAllChanges', async () => {
@@ -142,8 +109,9 @@ function registerCommands(context: vscode.ExtensionContext) {
         if (editor) {
             // 使用CorrectionService的智能全部拒绝方法
             await correctionService.rejectAllPendingParagraphs(editor);
+            // 强制更新状态栏
+            setTimeout(() => updateStatusBarForCurrentEditor(), 100);
         }
-        updateCorrectionActionButtonsVisibility();
     });
 
     const nextChangeCommand = vscode.commands.registerCommand('textCorrection.nextChange', () => {
@@ -159,7 +127,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
             correctionService.acceptParagraph(identifier, editor);
-            updateCorrectionActionButtonsVisibility(); // 更新按钮可见性
+            updateStatusBarForCurrentEditor(); // 更新按钮可见性
         } else {
             vscode.window.showErrorMessage('无法接受段落：没有活动的编辑器。');
         }
@@ -170,9 +138,18 @@ function registerCommands(context: vscode.ExtensionContext) {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
             correctionService.rejectParagraph(identifier, editor);
-            updateCorrectionActionButtonsVisibility(); // 更新按钮可见性
+            updateStatusBarForCurrentEditor(); // 更新按钮可见性
         } else {
             vscode.window.showErrorMessage('无法拒绝段落：没有活动的编辑器。');
+        }
+    });
+
+    // 关闭错误提示命令
+    const dismissErrorCommand = vscode.commands.registerCommand('textCorrection.dismissError', async (paragraphId: ParagraphIdentifier) => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            await correctionService.dismissError(paragraphId, editor);
+            updateStatusBarForCurrentEditor();
         }
     });
 
@@ -183,13 +160,10 @@ function registerCommands(context: vscode.ExtensionContext) {
         rejectAllCommand,
         nextChangeCommand,
         previousChangeCommand,
-        acceptParagraphCommand, // 新增
-        rejectParagraphCommand, // 新增
-        statusBarItem,
-        correctionStatusBarItem,
-        cancelStatusBarItem,
-        acceptAllStatusBarItem, // 新增
-        rejectAllStatusBarItem, // 新增
+        acceptParagraphCommand,
+        rejectParagraphCommand,
+        dismissErrorCommand,
+        statusBarManager,
         diffManager
     );
 }
@@ -197,78 +171,79 @@ function registerCommands(context: vscode.ExtensionContext) {
 function registerEventListeners(context: vscode.ExtensionContext) {
     // 监听文本选择变化
     const selectionChangeListener = vscode.window.onDidChangeTextEditorSelection(() => {
-        updateStatusBar();
+        updateStatusBarForCurrentEditor();
     });
 
     // 监听活动编辑器变化
     const activeEditorChangeListener = vscode.window.onDidChangeActiveTextEditor(() => {
-        updateStatusBar();
+        updateStatusBarForCurrentEditor();
+        editorStateManager.cleanupClosedEditors();
+        statusBarManager.cleanupClosedEditors();
+        diffManager.cleanupClosedEditors();
     });
 
     // 监听配置变化
     const configChangeListener = vscode.workspace.onDidChangeConfiguration((e) => {
         if (e.affectsConfiguration('textCorrection')) {
             configManager.reloadConfig();
-            updateStatusBar();
+            updateStatusBarForCurrentEditor();
         }
+    });
+
+    // 监听编辑器可见性变化，确保装饰正确恢复
+    const visibleEditorsChangeListener = vscode.window.onDidChangeVisibleTextEditors((editors) => {
+        // 移除自动恢复逻辑，避免重复应用装饰导致闪烁
+        // 装饰恢复由 onDidChangeActiveTextEditor 处理
+    });
+
+    // 监听段落纠错状态变化，更新CodeLens和状态栏
+    const paragraphCorrectionsChangeListener = correctionService.onDidChangeParagraphCorrections(() => {
+        // 触发CodeLens刷新
+        vscode.commands.executeCommand('vscode.executeCodeLensProvider', vscode.window.activeTextEditor?.document.uri);
+
+        // 延迟更新状态栏，确保状态变化被处理
+        setTimeout(() => {
+            updateStatusBarForCurrentEditor();
+        }, 50);
     });
 
     context.subscriptions.push(
         selectionChangeListener,
         activeEditorChangeListener,
-        configChangeListener
+        configChangeListener,
+        visibleEditorsChangeListener,
+        paragraphCorrectionsChangeListener
     );
 }
 
-function updateStatusBar() {
+function updateStatusBarForCurrentEditor() {
     const editor = vscode.window.activeTextEditor;
-    if (!editor) {
-        statusBarItem.text = "费用预估: 无文档";
-        return;
+    if (editor) {
+        statusBarManager.showStatusBarForEditor(editor);
+        // 恢复当前编辑器的装饰
+        restoreDecorationsForEditor(editor);
     }
-
-    const fullText = editor.document.getText();
-    const fullTextCost = costCalculator.estimateCost(fullText);
-
-    const selection = editor.selection;
-    let statusText = `全文纠错预估: ${fullTextCost}`;
-
-    if (!selection.isEmpty) {
-        const selectedText = editor.document.getText(selection);
-        const selectedCost = costCalculator.estimateCost(selectedText);
-        statusText += ` | 选中内容: ${selectedCost}`;
-    }
-
-    statusBarItem.text = statusText;
 }
 
-function updateCorrectionActionButtonsVisibility() {
-    if (diffManager && diffManager.hasChanges()) {
-        acceptAllStatusBarItem.show();
-        rejectAllStatusBarItem.show();
-    } else {
-        acceptAllStatusBarItem.hide();
-        rejectAllStatusBarItem.hide();
+function restoreDecorationsForEditor(editor: vscode.TextEditor) {
+    // 恢复diff装饰
+    const changes = editorStateManager.getChanges(editor);
+
+    if (changes.length > 0) {
+        // 强制恢复装饰，确保显示正确
+        editorStateManager.markDecorationsNeedUpdate(editor);
+        diffManager.updateDecorationsForEditor(editor);
     }
 }
 
 export function deactivate() {
-    if (statusBarItem) {
-        statusBarItem.dispose();
-    }
-    if (correctionStatusBarItem) {
-        correctionStatusBarItem.dispose();
-    }
-    if (cancelStatusBarItem) {
-        cancelStatusBarItem.dispose();
-    }
-    if (acceptAllStatusBarItem) {
-        acceptAllStatusBarItem.dispose();
-    }
-    if (rejectAllStatusBarItem) {
-        rejectAllStatusBarItem.dispose();
+    if (statusBarManager) {
+        statusBarManager.dispose();
     }
     if (diffManager) {
         diffManager.dispose();
+    }
+    if (editorStateManager) {
+        editorStateManager.dispose();
     }
 }

@@ -7,8 +7,7 @@ export interface CorrectionConfig {
     inputTokenCostPerMillion: number;
     outputTokenCostPerMillion: number;
     prompt: string;
-    currency: 'CNY' | 'USD';
-    exchangeRate: number;
+    costUnit: string;
     timeout: number; // 新增 timeout 属性，单位毫秒
 }
 
@@ -21,16 +20,15 @@ export class ConfigManager {
 
     private loadConfig(): CorrectionConfig {
         const vsconfig = vscode.workspace.getConfiguration('textCorrection');
-        
+
         return {
             apiKey: vsconfig.get('apiKey', ''),
             baseUrl: vsconfig.get('baseUrl', 'https://api.openai.com/v1'),
-            model: vsconfig.get('model', 'gpt-3.5-turbo'),
-            inputTokenCostPerMillion: vsconfig.get('inputTokenCostPerMillion', 1.5),
-            outputTokenCostPerMillion: vsconfig.get('outputTokenCostPerMillion', 2.0),
-            prompt: vsconfig.get('prompt', '请对以下文本进行纠错，保持原意不变，只修正语法、拼写和标点错误：'),
-            currency: vsconfig.get('currency', 'CNY') as 'CNY' | 'USD',
-            exchangeRate: vsconfig.get('exchangeRate', 7.0),
+            model: vsconfig.get('model', ''),
+            inputTokenCostPerMillion: vsconfig.get('inputTokenCostPerMillion', 2),
+            outputTokenCostPerMillion: vsconfig.get('outputTokenCostPerMillion', 8),
+            prompt: vsconfig.get('prompt', '# 输入文本\n{user_content}\n\n---\n对以上输入文本进行检错并纠正，以JSON格式输出：\n1. 如果没有错误，返回 {"result": true, "corrected_text": null}\n2. 如果有错误，返回 {"result": false, "corrected_text": "纠正后的文本"}'),
+            costUnit: vsconfig.get('costUnit', '元'),
             timeout: vsconfig.get('requestTimeout', 60000) // 从配置中读取 timeout，默认60秒
         };
     }
@@ -45,17 +43,21 @@ export class ConfigManager {
 
     public validateConfig(): string[] {
         const errors: string[] = [];
-        
+
         if (!this.config.apiKey.trim()) {
-            errors.push('API密钥不能为空');
+            errors.push('API密钥未设置，请在设置中配置 textCorrection.apiKey');
         }
-        
+
         if (!this.config.baseUrl.trim()) {
-            errors.push('API服务地址不能为空');
+            errors.push('API服务地址未设置，请在设置中配置 textCorrection.baseUrl');
         }
-        
+
         if (!this.config.model.trim()) {
-            errors.push('模型名称不能为空');
+            errors.push('模型名称未设置，请在设置中配置 textCorrection.model');
+        }
+
+        if (!this.config.prompt.trim()) {
+            errors.push('纠错提示词未设置，请在设置中配置 textCorrection.prompt');
         }
 
         return errors;
