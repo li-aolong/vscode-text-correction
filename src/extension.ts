@@ -52,30 +52,30 @@ export function activate(context: vscode.ExtensionContext) {
 
 function createStatusBarItems() {
     // 费用预估状态栏
-    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -5);
+    statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5);
     statusBarItem.show();
 
     // 纠错按钮状态栏
-    correctionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -10);
+    correctionStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 4);
     correctionStatusBarItem.text = "$(pencil) 全文纠错";
     correctionStatusBarItem.command = 'textCorrection.correctFullText';
     correctionStatusBarItem.show();
 
     // 取消按钮状态栏（初始隐藏）
-    cancelStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -11);
+    cancelStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 3);
     cancelStatusBarItem.text = "$(x)";
     cancelStatusBarItem.command = 'textCorrection.cancelCorrection';
     cancelStatusBarItem.tooltip = "取消纠错";
 
     // 接受全部按钮状态栏（初始隐藏）
-    acceptAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -12);
+    acceptAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 2);
     acceptAllStatusBarItem.text = "$(check-all) 全接受";
     acceptAllStatusBarItem.command = 'textCorrection.acceptAllChanges';
     acceptAllStatusBarItem.tooltip = "接受所有更改";
     acceptAllStatusBarItem.hide();
 
     // 拒绝全部按钮状态栏（初始隐藏）
-    rejectAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, -13);
+    rejectAllStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1);
     rejectAllStatusBarItem.text = "$(close-all) 全拒绝";
     rejectAllStatusBarItem.command = 'textCorrection.rejectAllChanges';
     rejectAllStatusBarItem.tooltip = "拒绝所有更改";
@@ -99,7 +99,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         correctionStatusBarItem.command = undefined; // 禁用命令
         correctionStatusBarItem.text = "$(loading~spin) 纠错中...";
         cancelStatusBarItem.show();
-        
+
         try {
             await correctionService.correctFullText(editor, (current: number, total: number) => {
                 // 进度回调
@@ -129,14 +129,20 @@ function registerCommands(context: vscode.ExtensionContext) {
 
     // 差异管理命令
     const acceptAllCommand = vscode.commands.registerCommand('textCorrection.acceptAllChanges', async () => {
-        await diffManager.acceptAllChanges();
-        correctionService.updateAllParagraphsStatus(ParagraphStatus.Accepted);
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            // 使用CorrectionService的智能全部接受方法
+            await correctionService.acceptAllPendingParagraphs(editor);
+        }
         updateCorrectionActionButtonsVisibility();
     });
 
     const rejectAllCommand = vscode.commands.registerCommand('textCorrection.rejectAllChanges', async () => {
-        await diffManager.rejectAllChanges();
-        correctionService.updateAllParagraphsStatus(ParagraphStatus.Rejected);
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            // 使用CorrectionService的智能全部拒绝方法
+            await correctionService.rejectAllPendingParagraphs(editor);
+        }
         updateCorrectionActionButtonsVisibility();
     });
 
@@ -223,10 +229,10 @@ function updateStatusBar() {
 
     const fullText = editor.document.getText();
     const fullTextCost = costCalculator.estimateCost(fullText);
-    
+
     const selection = editor.selection;
     let statusText = `全文纠错预估: ${fullTextCost}`;
-    
+
     if (!selection.isEmpty) {
         const selectedText = editor.document.getText(selection);
         const selectedCost = costCalculator.estimateCost(selectedText);

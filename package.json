@@ -56,17 +56,17 @@
         },
         "textCorrection.model": {
           "type": "string",
-          "default": "gpt-3.5-turbo",
+          "default": "",
           "description": "使用的模型名称"
         },
         "textCorrection.inputTokenCostPerMillion": {
           "type": "number",
-          "default": 1.5,
+          "default": 2,
           "description": "每百万输入Token花费（元）"
         },
         "textCorrection.outputTokenCostPerMillion": {
           "type": "number",
-          "default": 2,
+          "default": 8,
           "description": "每百万输出Token花费（元）"
         },
         "textCorrection.prompt": {
