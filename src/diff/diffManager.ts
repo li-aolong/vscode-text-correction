@@ -792,13 +792,50 @@ private async rejectSingleChange(change: ChangeInfo): Promise<void> {
         }
     }
 
-    if (!targetEditor || !this.editorStateManager.isEditorValid(targetEditor)) {
+    if (!targetEditor) {
         console.warn('No valid editor available for rejectSingleChange');
         vscode.window.showErrorMessage('拒绝修改失败: 找不到有效的编辑器');
         return;
     }
 
+    // 重新验证编辑器是否仍然有效
+    if (!this.editorStateManager.isEditorValid(targetEditor)) {
+        console.warn('Editor is no longer valid for rejectSingleChange');
+        vscode.window.showErrorMessage('拒绝修改失败: 编辑器已失效');
+        return;
+    }
+
     try {
+        // 验证range是否仍然有效
+        const document = targetEditor.document;
+        if (change.range.end.line >= document.lineCount) {
+            console.warn('Change range is out of bounds, attempting to fix');
+            // 尝试修复range
+            const lastLine = document.lineCount - 1;
+            const lastLineLength = document.lineAt(lastLine).text.length;
+            change.range = new vscode.Range(
+                change.range.start,
+                new vscode.Position(lastLine, lastLineLength)
+            );
+        }
+
+        // 验证当前文档内容是否与期望的纠正文本匹配
+        const currentText = document.getText(change.range);
+        if (currentText !== change.corrected) {
+            console.warn('Current text does not match expected corrected text, attempting to find correct range');
+            // 尝试在文档中查找纠正后的文本
+            const fullText = document.getText();
+            const correctedIndex = fullText.indexOf(change.corrected);
+            if (correctedIndex !== -1) {
+                // 重新计算range
+                const startPos = document.positionAt(correctedIndex);
+                const endPos = document.positionAt(correctedIndex + change.corrected.length);
+                change.range = new vscode.Range(startPos, endPos);
+            } else {
+                throw new Error('Cannot find corrected text in document');
+            }
+        }
+
         // 使用WorkspaceEdit进行更可靠的编辑
         const workspaceEdit = new vscode.WorkspaceEdit();
         workspaceEdit.replace(targetEditor.document.uri, change.range, change.original);
@@ -806,8 +843,15 @@ private async rejectSingleChange(change: ChangeInfo): Promise<void> {
         const success = await vscode.workspace.applyEdit(workspaceEdit);
 
         if (!success) {
-            // 如果WorkspaceEdit失败，回退到直接编辑器操作
-            console.warn('WorkspaceEdit failed, falling back to direct editor edit');
+            // 如果WorkspaceEdit失败，等待一小段时间后重试直接编辑器操作
+            console.warn('WorkspaceEdit failed, waiting and retrying with direct editor edit');
+            await new Promise(resolve => setTimeout(resolve, 100));
+
+            // 重新验证编辑器是否仍然有效
+            if (!this.editorStateManager.isEditorValid(targetEditor)) {
+                throw new Error('Editor became invalid during operation');
+            }
+
             const editorSuccess = await targetEditor.edit(editBuilder => {
                 editBuilder.replace(change.range, change.original);
             });
@@ -864,6 +908,13 @@ public clearDecorationsForEditor(editor: vscode.TextEditor): void {
         editor.setDecorations(decorations.insertDecorationType, []);
         editor.setDecorations(decorations.highlightDecorationType, []);
     }
+}
+
+/**
+ * 公开的段落拒绝方法
+ */
+public async rejectParagraphChange(change: ChangeInfo): Promise<void> {
+    return this.rejectSingleChange(change);
 }
 
 /**

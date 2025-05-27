@@ -20,9 +20,6 @@
 - `textCorrection.apiKey`: API密钥（必填）| API key (required)
 - `textCorrection.baseUrl`: API服务地址 | API service URL
 - `textCorrection.model`: 使用的模型名称（必填）| Model name to use (required)
-- `textCorrection.inputTokenCostPerMillion`: 每百万输入Token花费 | Cost per million input tokens
-- `textCorrection.outputTokenCostPerMillion`: 每百万输出Token花费 | Cost per million output tokens
-- `textCorrection.costUnit`: 费用单位（元/美元）| Cost unit (Yuan/USD)
 - `textCorrection.prompt`: 纠错提示词模板 | Correction prompt template
 
 ## 📋 使用方法 | How to Use
@@ -49,6 +46,7 @@
 - [ ] **上一个/下一个导航** | **Previous/Next Navigation**：快速跳转到上一个/下一个修改位置 | Quick jump to previous/next change locations
 - [ ] **纠正时间显示** | **Correction Time Display**：显示每次纠错操作的耗时 | Display time taken for each correction operation
 - [ ] **选中文本纠正** | **Selected Text Correction**：支持只对选中的文本进行纠错 | Support correction of selected text only
+- [ ] **选中排除纠正** | **Exclude Selected Text from Correction**：选中部分文本后，排除这部分文本的纠正 | Select part of the text and exclude it from correction
 
 ---
 

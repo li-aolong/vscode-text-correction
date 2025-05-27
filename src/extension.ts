@@ -1,6 +1,5 @@
 import * as vscode from 'vscode';
 import { ConfigManager } from './config/configManager';
-import { CostCalculator } from './services/costCalculator';
 import { CorrectionService, ParagraphIdentifier, ParagraphStatus } from './services/correctionService';
 import { DiffManager } from './diff/diffManager';
 import { ParagraphCodeLensProvider } from './providers/paragraphCodeLensProvider';
@@ -8,7 +7,6 @@ import { EditorStateManager } from './services/editorStateManager';
 import { StatusBarManager } from './ui/statusBarManager';
 
 let configManager: ConfigManager;
-let costCalculator: CostCalculator;
 let correctionService: CorrectionService;
 let diffManager: DiffManager;
 let editorStateManager: EditorStateManager;
@@ -17,9 +15,8 @@ let statusBarManager: StatusBarManager;
 export function activate(context: vscode.ExtensionContext) {
     // 初始化服务
     configManager = new ConfigManager();
-    costCalculator = new CostCalculator(configManager);
     editorStateManager = new EditorStateManager();
-    statusBarManager = new StatusBarManager(editorStateManager, costCalculator);
+    statusBarManager = new StatusBarManager(editorStateManager, configManager);
     correctionService = new CorrectionService(configManager, editorStateManager);
     diffManager = new DiffManager(editorStateManager);
 
@@ -68,8 +65,6 @@ function registerCommands(context: vscode.ExtensionContext) {
             await correctionService.correctFullText(editor, (current: number, total: number) => {
                 // 进度回调 - 立即更新状态栏
                 statusBarManager.updateCorrectionProgress(editor, current, total);
-                // 强制刷新状态栏显示
-                updateStatusBarForCurrentEditor();
             });
         } catch (error) {
             vscode.window.showErrorMessage(`纠错失败: ${error}`);
@@ -201,9 +196,12 @@ function registerEventListeners(context: vscode.ExtensionContext) {
         // 触发CodeLens刷新
         vscode.commands.executeCommand('vscode.executeCodeLensProvider', vscode.window.activeTextEditor?.document.uri);
 
-        // 延迟更新状态栏，确保状态变化被处理
+        // 延迟更新状态栏，但只在不是纠错进行中时更新，避免覆盖进度显示
         setTimeout(() => {
-            updateStatusBarForCurrentEditor();
+            const editor = vscode.window.activeTextEditor;
+            if (editor && !editorStateManager.isCorrectingInProgress(editor)) {
+                updateStatusBarForCurrentEditor();
+            }
         }, 50);
     });
 

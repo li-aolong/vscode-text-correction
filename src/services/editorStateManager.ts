@@ -3,6 +3,16 @@ import { ParagraphCorrection, ParagraphStatus } from './correctionService';
 import { ChangeInfo } from '../diff/diffManager';
 
 /**
+ * 花费统计信息
+ */
+export interface CostInfo {
+    totalInputTokens: number;
+    totalOutputTokens: number;
+    totalCost: number;
+    currency: string;
+}
+
+/**
  * 单个编辑器的状态信息
  */
 export interface EditorState {
@@ -15,10 +25,7 @@ export interface EditorState {
     isCancelled: boolean;
     decorationsApplied: boolean; // 标记装饰是否已应用
     lastDecorationUpdate: number; // 最后一次装饰更新时间
-    // 实际花费跟踪
-    totalInputTokens: number; // 累计输入token
-    totalOutputTokens: number; // 累计输出token
-    totalActualCost: number; // 累计实际花费
+    costInfo: CostInfo; // 花费统计信息
 }
 
 /**
@@ -128,9 +135,12 @@ export class EditorStateManager {
                 isCancelled: false,
                 decorationsApplied: false,
                 lastDecorationUpdate: 0,
-                totalInputTokens: 0,
-                totalOutputTokens: 0,
-                totalActualCost: 0
+                costInfo: {
+                    totalInputTokens: 0,
+                    totalOutputTokens: 0,
+                    totalCost: 0,
+                    currency: '元'
+                }
             });
         }
 
@@ -168,10 +178,13 @@ export class EditorStateManager {
         state.isCancelled = false;
         state.isCorrectingInProgress = false;
         state.originalDocumentContent = '';
-        // 重置花费统计
-        state.totalInputTokens = 0;
-        state.totalOutputTokens = 0;
-        state.totalActualCost = 0;
+        // 重置花费信息
+        state.costInfo = {
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalCost: 0,
+            currency: state.costInfo.currency // 保留货币单位
+        };
         this._onDidChangeEditorState.fire(state.uri);
     }
 
@@ -183,16 +196,7 @@ export class EditorStateManager {
         return state.changes.length > 0 || state.paragraphCorrections.some(pc => pc.status === ParagraphStatus.Pending);
     }
 
-    /**
-     * 更新编辑器的花费统计
-     */
-    public updateCostStatistics(editor: vscode.TextEditor, inputTokens: number, outputTokens: number, cost: number): void {
-        const state = this.getEditorState(editor);
-        state.totalInputTokens += inputTokens;
-        state.totalOutputTokens += outputTokens;
-        state.totalActualCost += cost;
-        this._onDidChangeEditorState.fire(state.uri);
-    }
+
 
     /**
      * 检查编辑器是否正在纠错
@@ -336,6 +340,41 @@ export class EditorStateManager {
                 this.editorInstances.delete(uri);
             }
         }
+    }
+
+    /**
+     * 更新花费信息
+     */
+    public updateCostInfo(editor: vscode.TextEditor, inputTokens: number, outputTokens: number, cost: number, currency: string): void {
+        const state = this.getEditorState(editor);
+        state.costInfo.totalInputTokens += inputTokens;
+        state.costInfo.totalOutputTokens += outputTokens;
+        state.costInfo.totalCost += cost;
+        state.costInfo.currency = currency;
+        this._onDidChangeEditorState.fire(state.uri);
+    }
+
+    /**
+     * 获取花费信息
+     */
+    public getCostInfo(editor: vscode.TextEditor): CostInfo {
+        const state = this.getEditorState(editor);
+        return { ...state.costInfo }; // 返回副本
+    }
+
+    /**
+     * 重置花费信息
+     */
+    public resetCostInfo(editor: vscode.TextEditor): void {
+        const state = this.getEditorState(editor);
+        const currency = state.costInfo.currency; // 保留货币单位
+        state.costInfo = {
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+            totalCost: 0,
+            currency: currency
+        };
+        this._onDidChangeEditorState.fire(state.uri);
     }
 
     /**

@@ -65,16 +65,7 @@
           "default": "",
           "description": "使用的模型名称（必填）"
         },
-        "textCorrection.inputTokenCostPerMillion": {
-          "type": "number",
-          "default": 2,
-          "description": "每百万输入Token花费"
-        },
-        "textCorrection.outputTokenCostPerMillion": {
-          "type": "number",
-          "default": 8,
-          "description": "每百万输出Token花费"
-        },
+
         "textCorrection.prompt": {
           "type": "string",
           "editPresentation": "multilineText",
@@ -83,14 +74,21 @@
           "markdownDescription": "**纠错提示词模板配置**\n\n`{user_content}`变量会被替换为待纠正的文本内容。\n\n**API返回格式要求：**\n- 无错误时返回：`{\"result\": true, \"corrected_text\": null}`\n- 有错误时返回：`{\"result\": false, \"corrected_text\": \"纠正后的文本\"}`",
           "default": "# 输入文本\n\n{user_content}\n\n---\n\n对以上输入文本进行检错并纠正，以JSON格式输出：\n1. 如果没有错误，返回 {\"result\": true, \"corrected_text\": null}\n2. 如果有错误，返回 {\"result\": false, \"corrected_text\": \"纠正后的文本\"}"
         },
-        "textCorrection.costUnit": {
+        "textCorrection.inputTokenPrice": {
+          "type": "number",
+          "default": 2,
+          "description": "输入token价格（每百万token）"
+        },
+        "textCorrection.outputTokenPrice": {
+          "type": "number",
+          "default": 8,
+          "description": "输出token价格（每百万token）"
+        },
+        "textCorrection.currency": {
           "type": "string",
-          "enum": [
-            "元",
-            "美元"
-          ],
           "default": "元",
-          "description": "费用单位，用于控制每百万Token成本和费用显示的单位"
+          "enum": ["美元", "元"],
+          "description": "货币单位"
         }
       }
     }
