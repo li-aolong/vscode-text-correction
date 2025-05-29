@@ -79,7 +79,7 @@ export class TextProcessingService {
                 startLineNumber: startLine, // 初始化 startLineNumber
                 endLine: endLine,
                 range: range,
-                status: ParagraphStatus.Pending,
+                status: ParagraphStatus.Rejected, // 初始状态设为Rejected，表示使用原始内容
                 trailingEmptyLines: lines.length - 1 - lastNonEmptyLineIndex
             });
         }
