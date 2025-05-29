@@ -4,20 +4,28 @@
 
 ---
 
-## [0.0.2] - 2025-05-27
+## [0.0.2] - 2025-05-29
 
-### 新增功能 | Added
+### 改进 | Improvements
 - **花费信息详细显示** | **Detailed Cost Information Display**
-  - 在花费详情中新增输入花费和输出花费两项显示
-  - Added separate input cost and output cost items in cost details
-  - 花费信息现在始终显示，即使花费为0
-  - Cost information now always displays, even when cost is 0
+  - 在花费详情中新增输入花费和输出花费两项显示 | Added separate input cost and output cost items in cost details
+  - 花费信息现在始终显示，即使花费为0 | Cost information now always displays, even when cost is 0
 
 - **纠错进度详细提示** | **Detailed Correction Progress Tooltip**
-  - 鼠标悬停在纠错进度上时显示详细信息
-  - Detailed information shown when hovering over correction progress
-  - 包含总段落数、已纠正段落数、剩余段落数和完成百分比
-  - Includes total paragraphs, corrected paragraphs, remaining paragraphs, and completion percentage
+  - 鼠标悬停在纠错进度上时显示详细信息 | Detailed information shown when hovering over correction progress
+  - 包含总段落数、已纠正段落数、剩余段落数和完成百分比 | Includes total paragraphs, corrected paragraphs, remaining paragraphs, and completion percentage
+
+- **取消纠错逻辑优化** | **Cancel Correction Logic Optimization**
+  - 点击取消按钮后立即停止所有后台操作 | Immediately stop all background operations after clicking the cancel button
+  - 保持界面状态不变，不再更新编辑器内容 | Maintain interface state and stop updating editor content
+
+- **段落拒绝逻辑优化** | **Paragraph Rejection Logic Optimization**
+  - 简化代码逻辑，移除冗余判断 | Simplified code logic, removed redundant conditions
+  - 提高拒绝操作的稳定性和可靠性 | Improved stability and reliability of rejection operations
+
+- **服务初始化逻辑优化** | **Service Initialization Logic Optimization**
+  - 修复 DiffManager 初始化顺序问题 | Fixed DiffManager initialization sequence issue
+  - 确保所有服务在使用前正确初始化 | Ensure all services are properly initialized before use
 
 ---
 

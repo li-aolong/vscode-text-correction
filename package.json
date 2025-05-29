@@ -3,7 +3,7 @@
   "displayName": "Text Correction",
   "publisher": "li-aolong",
   "description": "智能文本纠错插件",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "engines": {
     "vscode": "^1.74.0"
   },
