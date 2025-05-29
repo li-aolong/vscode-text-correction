@@ -127,8 +127,20 @@ export class CorrectionWorkflowService {
             const paragraph = documentParagraphs.paragraphs[i];
             if (paragraph.originalContent.trim()) {
                 try {
+                    // 调用API前再次检查是否已取消
+                    if (this.editorStateManager.getEditorState(editor).isCancelled) {
+                        console.log(`[CorrectionWorkflow] 检测到取消操作，跳过段落 ${paragraph.id} 的处理`);
+                        break; // 立即跳出循环，不再处理任何段落
+                    }
+                    
                     // 调用API进行文本纠错
                     const apiResult = await this.apiService.correctText(paragraph.originalContent);
+
+                    // API调用完成后再次检查是否已取消
+                    if (this.editorStateManager.getEditorState(editor).isCancelled) {
+                        console.log(`[CorrectionWorkflow] API调用后检测到取消操作，不应用段落 ${paragraph.id} 的修改`);
+                        break; // 立即跳出循环，不再处理任何段落
+                    }
 
                     // 计算并累计花费
                     if (apiResult.usage) {
@@ -142,6 +154,12 @@ export class CorrectionWorkflowService {
                         // 设置段落状态为待处理
                         paragraph.status = ParagraphStatus.Pending;
 
+                        // 应用修改到编辑器前再次检查是否已取消
+                        if (this.editorStateManager.getEditorState(editor).isCancelled) {
+                            console.log(`[CorrectionWorkflow] 应用修改前检测到取消操作，不应用段落 ${paragraph.id} 的修改`);
+                            break; // 立即跳出循环，不再处理任何段落
+                        }
+                        
                         // 应用修改到编辑器
                         await this.documentEditService.applyCorrectionToEditor(currentEditor, {
                             content: paragraph.originalContent,
@@ -190,10 +208,19 @@ export class CorrectionWorkflowService {
             }
         }
 
+        // 获取最终状态
+        const finalState = this.editorStateManager.getEditorState(editor);
+        
         // 更新编辑器状态
         this.editorStateManager.updateEditorState(editor, {
             isCorrectingInProgress: false
         });
+
+        // 如果操作被取消，不触发任何更新或显示任何消息
+        if (finalState.isCancelled) {
+            console.log(`[CorrectionWorkflow] 纠错操作已被用户取消，不进行后续处理`);
+            return;
+        }
 
         // 触发更新
         this._onDidChangeParagraphCorrections.fire();
@@ -208,11 +235,7 @@ export class CorrectionWorkflowService {
         if (this.diffManager && this.diffManager.hasChanges()) {
             vscode.window.showInformationMessage(`文档 "${editorUri.split('/').pop()}" 纠错完成，请使用段落旁的按钮进行接受或拒绝操作。`);
         } else {
-            // 检查是否被取消
-            const finalState = this.editorStateManager.getEditorState(editor);
-            if (!finalState.isCancelled) {
-                vscode.window.showInformationMessage(`文档 "${editorUri.split('/').pop()}" 纠错完成，未发现需要修改的内容。`);
-            }
+            vscode.window.showInformationMessage(`文档 "${editorUri.split('/').pop()}" 纠错完成，未发现需要修改的内容。`);
         }
     }
 

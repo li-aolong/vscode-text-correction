@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { CorrectionService } from '../services/correctionService';
-import { ParagraphModel, ParagraphStatus } from '../models/paragraphModel';
+import { ParagraphStatus } from '../models/paragraphModel';
 
 export class ParagraphCodeLensProvider implements vscode.CodeLensProvider {
     private _onDidChangeCodeLenses: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();

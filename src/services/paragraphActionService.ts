@@ -149,113 +149,113 @@ export class ParagraphActionService {
             paragraph.correctedContent = null; // 清除纠正内容
             paragraph.status = ParagraphStatus.Rejected;
 
-            // 如果之前有纠正内容，并且该纠正内容与原始内容不同，则需要在编辑器中恢复原始内容
-            if (contentBeforeRejection !== null && contentBeforeRejection !== originalContent) {
-                console.log(`[RejectParagraph] 段落 ${paragraphId} 内容需要从纠正状态恢复为原始内容。`);
-                
-                // 计算行数变化
-                const correctedLines = contentBeforeRejection.split('\n').length;
-                const originalLines = originalContent.split('\n').length;
-                const lineDelta = originalLines - correctedLines; // 正值表示行数增加，负值表示行数减少
-                
-                console.log(`[RejectParagraph] 段落 ${paragraphId} 行数变化: ${lineDelta}行 (原始: ${originalLines}行, 纠正: ${correctedLines}行)`);
-                
-                // 当前 paragraph.range 对应的是 contentBeforeRejection 在编辑器中的位置
-                // 我们需要将这部分文本替换为 originalContent
-                // 优先尝试 editor.edit，如果失败则尝试 WorkspaceEdit
-                const editSuccess = await editor.edit(editBuilder => {
-                    editBuilder.replace(paragraph.range, originalContent);
-                });
+            // 在编辑器中恢复原始内容
+            console.log(`[RejectParagraph] 段落 ${paragraphId} 内容需要从纠正状态恢复为原始内容。`);
+            
+            // 安全地计算行数
+            const originalLines = originalContent.split('\n').length;
+            let correctedLines: number;
 
-                if (!editSuccess) {
-                    console.warn('[RejectParagraph] editor.edit 失败，尝试使用 WorkspaceEdit。');
-                    const workspaceEdit = new vscode.WorkspaceEdit();
-                    workspaceEdit.replace(editor.document.uri, paragraph.range, originalContent);
-                    const wsSuccess = await vscode.workspace.applyEdit(workspaceEdit);
-                    if (!wsSuccess) {
-                        throw new Error('无法恢复段落原始内容（editor.edit 和 workspace.applyEdit 均失败）');
-                    }
-                }
-                
-                // 文本恢复后，段落在文档中的实际范围可能已更改（如果行数不同）。
-                // 调用 updateParagraphRange 更新内存中 paragraph.range 的信息。
-                paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
-                
-                // 如果行数发生变化，更新后续段落的位置信息
-                if (lineDelta !== 0) {
-                    // 获取当前段落在段落数组中的索引
-                    const currentIndex = docParagraphs.paragraphs.findIndex(p => p.id === paragraphId);
-                    if (currentIndex !== -1 && currentIndex < docParagraphs.paragraphs.length - 1) {
-                        console.log(`[RejectParagraph] 开始更新后续段落的位置信息，当前段落索引: ${currentIndex}`);
-                        
-                        // 更新后续段落的位置信息
-                        for (let i = currentIndex + 1; i < docParagraphs.paragraphs.length; i++) {
-                            const nextParagraph = docParagraphs.paragraphs[i];
-                            
-                            // 更新段落的起始行号和结束行号
-                            nextParagraph.startLineNumber = nextParagraph.startLineNumber + lineDelta;
-                            nextParagraph.startLine = nextParagraph.startLine + lineDelta;
-                            nextParagraph.endLine = nextParagraph.endLine + lineDelta;
-                            
-                            // 更新段落的范围信息
-                            nextParagraph.range = this.textProcessingService.updateParagraphRange(nextParagraph);
-                            
-                            console.log(`[RejectParagraph] 更新段落 ${nextParagraph.id} 的位置信息，新的起始行: ${nextParagraph.startLine}`);
-                            
-                            // 如果段落有对应的diff信息，也需要更新
-                            const changeInfo = this.diffHandlerService.findChangeInfoForParagraphModel(nextParagraph, editor);
-                            if (changeInfo) {
-                                console.log(`[RejectParagraph] 更新段落 ${nextParagraph.id} 的diff信息`);
-                                // 移除旧的diff信息
-                                this.editorStateManager.removeChange(editor, changeInfo);
-                                
-                                // 添加新的diff信息，使用更新后的范围
-                                if (this.diffManager && nextParagraph.correctedContent !== null) {
-                                    this.diffManager.addChange(
-                                        nextParagraph.range, 
-                                        nextParagraph.originalContent, 
-                                        nextParagraph.correctedContent, 
-                                        editor
-                                    );
-                                }
-                            }
-                        }
-                        
-                        // 当行数变化时，需要完全重建所有diff信息
-                        console.log(`[RejectParagraph] 开始重建所有diff信息`);
-                        
-                        // 1. 先清除所有现有的changes
-                        this.editorStateManager.setChanges(editor, []);
-                        
-                        // 2. 清除所有装饰
-                        if (this.diffManager) {
-                            this.diffManager.clearDecorationsForEditor(editor);
-                        }
-                        
-                        // 3. 重新为所有Pending状态的段落创建新的diff信息
-                        for (const p of docParagraphs.paragraphs) {
-                            if (p.status === ParagraphStatus.Pending && p.correctedContent !== null) {
-                                console.log(`[RejectParagraph] 为段落 ${p.id} 重建新的diff信息`);
-                                if (this.diffManager) {
-                                    this.diffManager.addChange(
-                                        p.range, 
-                                        p.originalContent, 
-                                        p.correctedContent, 
-                                        editor
-                                    );
-                                }
-                            }
-                        }
-                    }
-                }
+            if (contentBeforeRejection === null) {
+                correctedLines = 0; // 如果之前的"纠正"是删除内容，则其行数为0
             } else {
-                // 编辑器中的文本无需更改（可能没有纠正内容，或纠正内容与原始内容相同）。
-                // 但仍需调用 updateParagraphRange，以确保 paragraph.range 基于 originalContent 正确计算，
-                // 因为后续逻辑可能依赖此范围的准确性。
-                console.log(`[RejectParagraph] 段落 ${paragraphId} 内容无需在编辑器中更改，仅更新范围信息。`);
-                paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
+                // 此时 contentBeforeRejection 必然是字符串，可以安全调用 .split()
+                correctedLines = contentBeforeRejection.split('\n').length;
             }
+            
+            const lineDelta = originalLines - correctedLines; // 正值表示行数增加，负值表示行数减少
+            
+            console.log(`[RejectParagraph] 段落 ${paragraphId} 行数变化: ${lineDelta}行 (原始: ${originalLines}行, 纠正: ${correctedLines}行)`);
+            
+            // 当前 paragraph.range 对应的是 contentBeforeRejection 在编辑器中的位置
+            // 我们需要将这部分文本替换为 originalContent
+            // 优先尝试 editor.edit，如果失败则尝试 WorkspaceEdit
+            const editSuccess = await editor.edit(editBuilder => {
+                editBuilder.replace(paragraph.range, originalContent);
+            });
 
+            if (!editSuccess) {
+                console.warn('[RejectParagraph] editor.edit 失败，尝试使用 WorkspaceEdit。');
+                const workspaceEdit = new vscode.WorkspaceEdit();
+                workspaceEdit.replace(editor.document.uri, paragraph.range, originalContent);
+                const wsSuccess = await vscode.workspace.applyEdit(workspaceEdit);
+                if (!wsSuccess) {
+                    throw new Error('无法恢复段落原始内容（editor.edit 和 workspace.applyEdit 均失败）');
+                }
+            }
+            
+            // 编辑器内容已更改，更新此段落在内存中的范围信息
+            // updateParagraphRange会使用更新后的paragraph.startLineNumber和originalContent
+            paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
+            
+            // 如果行数发生变化，更新后续段落的位置信息
+            if (lineDelta !== 0) {
+                // 获取当前段落在段落数组中的索引
+                const currentIndex = docParagraphs.paragraphs.findIndex(p => p.id === paragraphId);
+                if (currentIndex !== -1 && currentIndex < docParagraphs.paragraphs.length - 1) {
+                    console.log(`[RejectParagraph] 开始更新后续段落的位置信息，当前段落索引: ${currentIndex}`);
+                    
+                    // 更新后续段落的位置信息
+                    for (let i = currentIndex + 1; i < docParagraphs.paragraphs.length; i++) {
+                        const nextParagraph = docParagraphs.paragraphs[i];
+                        
+                        // 更新段落的起始行号和结束行号
+                        nextParagraph.startLineNumber = nextParagraph.startLineNumber + lineDelta;
+                        nextParagraph.startLine = nextParagraph.startLine + lineDelta;
+                        nextParagraph.endLine = nextParagraph.endLine + lineDelta;
+                        
+                        // 更新段落的范围信息
+                        nextParagraph.range = this.textProcessingService.updateParagraphRange(nextParagraph);
+                        
+                        console.log(`[RejectParagraph] 更新段落 ${nextParagraph.id} 的位置信息，新的起始行: ${nextParagraph.startLine}`);
+                        
+                        // 如果段落有对应的diff信息，也需要更新
+                        const changeInfo = this.diffHandlerService.findChangeInfoForParagraphModel(nextParagraph, editor);
+                        if (changeInfo) {
+                            console.log(`[RejectParagraph] 更新段落 ${nextParagraph.id} 的diff信息`);
+                            // 移除旧的diff信息
+                            this.editorStateManager.removeChange(editor, changeInfo);
+                            
+                            // 添加新的diff信息，使用更新后的范围
+                            if (this.diffManager && nextParagraph.correctedContent !== null) {
+                                this.diffManager.addChange(
+                                    nextParagraph.range, 
+                                    nextParagraph.originalContent, 
+                                    nextParagraph.correctedContent, 
+                                    editor
+                                );
+                            }
+                        }
+                    }
+                    
+                    // 当行数变化时，需要完全重建所有diff信息
+                    console.log(`[RejectParagraph] 开始重建所有diff信息`);
+                    
+                    // 1. 先清除所有现有的changes
+                    this.editorStateManager.setChanges(editor, []);
+                    
+                    // 2. 清除所有装饰
+                    if (this.diffManager) {
+                        this.diffManager.clearDecorationsForEditor(editor);
+                    }
+                    
+                    // 3. 重新为所有Pending状态的段落创建新的diff信息
+                    for (const p of docParagraphs.paragraphs) {
+                        if (p.status === ParagraphStatus.Pending && p.correctedContent !== null) {
+                            console.log(`[RejectParagraph] 为段落 ${p.id} 重建新的diff信息`);
+                            if (this.diffManager) {
+                                this.diffManager.addChange(
+                                    p.range, 
+                                    p.originalContent, 
+                                    p.correctedContent, 
+                                    editor
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            
             // 保存更新后的段落集合
             this.setDocumentParagraphs(editor, docParagraphs);
 
@@ -403,10 +403,12 @@ export class ParagraphActionService {
                     rejectedCount++;
                     paragraphsToCleanDecorations.push(paragraph);
 
-                    if (contentBeforeRejection !== null && contentBeforeRejection !== originalContent) {
-                        // 此段落内容需要从纠正状态恢复为原始内容
-                        const linesInEditorBeforeEdit = currentParagraphDocRange.end.line - currentParagraphDocRange.start.line + 1;
+                    // 恢复段落原始内容
+                    const linesInEditorBeforeEdit = currentParagraphDocRange.end.line - currentParagraphDocRange.start.line + 1;
 
+                    // 只有当contentBeforeRejection不为null时才需要在编辑器中恢复原始内容
+                    // 因为null表示没有纠正建议（或建议是删除整个段落）
+                    if (contentBeforeRejection !== null) {
                         const success = await editor.edit(editBuilder => {
                             editBuilder.replace(currentParagraphDocRange, originalContent);
                         });
@@ -417,18 +419,14 @@ export class ParagraphActionService {
                             // throw new Error(`无法恢复段落 ${paragraph.id} 的原始内容`);
                             // 为了尽可能多地拒绝，我们这里选择继续，但后续范围可能不准
                         }
-
-                        // 编辑器内容已更改，更新此段落在内存中的范围信息
-                        // updateParagraphRange会使用更新后的paragraph.startLineNumber和originalContent
-                        paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
-                        
-                        const linesInEditorAfterEdit = paragraph.range.end.line - paragraph.range.start.line + 1;
-                        cumulativeLineDelta += (linesInEditorAfterEdit - linesInEditorBeforeEdit);
-                    } else {
-                        // 内容无需在编辑器中更改，但其起始行可能已变，仍需更新范围
-                        paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
-                        // 此段落本身没有引起行数变化
                     }
+
+                    // 编辑器内容已更改，更新此段落在内存中的范围信息
+                    // updateParagraphRange会使用更新后的paragraph.startLineNumber和originalContent
+                    paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
+                    
+                    const linesInEditorAfterEdit = paragraph.range.end.line - paragraph.range.start.line + 1;
+                    cumulativeLineDelta += (linesInEditorAfterEdit - linesInEditorBeforeEdit);    
                 } else {
                     // 非待处理段落，但其起始行可能因前面段落的修改而改变，同样需要更新其在内存中的范围
                     paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
