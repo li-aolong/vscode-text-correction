@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import { ConfigManager } from './config/configManager';
-import { CorrectionService, ParagraphIdentifier, ParagraphStatus } from './services/correctionService';
+import { CorrectionService } from './services/correctionService';
 import { DiffManager } from './diff/diffManager';
 import { ParagraphCodeLensProvider } from './providers/paragraphCodeLensProvider';
 import { EditorStateManager } from './services/editorStateManager';
@@ -117,11 +117,14 @@ function registerCommands(context: vscode.ExtensionContext) {
         diffManager.goToPreviousChange();
     });
 
+    // 获取 paragraphActionService 实例
+    const paragraphActionService = (correctionService as any).paragraphActionService;
+    
     // 段落接受命令
-    const acceptParagraphCommand = vscode.commands.registerCommand('textCorrection.acceptParagraph', (identifier: ParagraphIdentifier) => {
+    const acceptParagraphCommand = vscode.commands.registerCommand('textCorrection.acceptParagraph', (paragraphId: string) => {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
-            correctionService.acceptParagraph(identifier, editor);
+            paragraphActionService.acceptParagraph(paragraphId, editor);
             updateStatusBarForCurrentEditor(); // 更新按钮可见性
         } else {
             vscode.window.showErrorMessage('无法接受段落：没有活动的编辑器。');
@@ -129,10 +132,10 @@ function registerCommands(context: vscode.ExtensionContext) {
     });
 
     // 段落拒绝命令
-    const rejectParagraphCommand = vscode.commands.registerCommand('textCorrection.rejectParagraph', (identifier: ParagraphIdentifier) => {
+    const rejectParagraphCommand = vscode.commands.registerCommand('textCorrection.rejectParagraph', (paragraphId: string) => {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
-            correctionService.rejectParagraph(identifier, editor);
+            paragraphActionService.rejectParagraph(paragraphId, editor);
             updateStatusBarForCurrentEditor(); // 更新按钮可见性
         } else {
             vscode.window.showErrorMessage('无法拒绝段落：没有活动的编辑器。');
@@ -140,10 +143,10 @@ function registerCommands(context: vscode.ExtensionContext) {
     });
 
     // 关闭错误提示命令
-    const dismissErrorCommand = vscode.commands.registerCommand('textCorrection.dismissError', async (paragraphId: ParagraphIdentifier) => {
+    const dismissErrorCommand = vscode.commands.registerCommand('textCorrection.dismissError', async (paragraphId: string) => {
         const editor = vscode.window.activeTextEditor;
         if (editor) {
-            await correctionService.dismissError(paragraphId, editor);
+            await paragraphActionService.dismissError(paragraphId, editor);
             updateStatusBarForCurrentEditor();
         }
     });
@@ -185,12 +188,6 @@ function registerEventListeners(context: vscode.ExtensionContext) {
         }
     });
 
-    // 监听编辑器可见性变化，确保装饰正确恢复
-    const visibleEditorsChangeListener = vscode.window.onDidChangeVisibleTextEditors((editors) => {
-        // 移除自动恢复逻辑，避免重复应用装饰导致闪烁
-        // 装饰恢复由 onDidChangeActiveTextEditor 处理
-    });
-
     // 监听段落纠错状态变化，更新CodeLens和状态栏
     const paragraphCorrectionsChangeListener = correctionService.onDidChangeParagraphCorrections(() => {
         // 触发CodeLens刷新
@@ -209,7 +206,6 @@ function registerEventListeners(context: vscode.ExtensionContext) {
         selectionChangeListener,
         activeEditorChangeListener,
         configChangeListener,
-        visibleEditorsChangeListener,
         paragraphCorrectionsChangeListener
     );
 }

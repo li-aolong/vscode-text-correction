@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
-import { ParagraphCorrection, ParagraphStatus } from './correctionService';
 import { ChangeInfo } from '../diff/diffManager';
+import { DocumentParagraphs, ParagraphStatus } from '../models/paragraphModel';
 
 /**
  * 花费统计信息
@@ -19,13 +19,13 @@ export interface EditorState {
     uri: string;
     isCorrectingInProgress: boolean;
     originalDocumentContent: string;
-    paragraphCorrections: ParagraphCorrection[];
     changes: ChangeInfo[];
     currentChangeIndex: number;
     isCancelled: boolean;
     decorationsApplied: boolean; // 标记装饰是否已应用
     lastDecorationUpdate: number; // 最后一次装饰更新时间
     costInfo: CostInfo; // 花费统计信息
+    documentParagraphs?: DocumentParagraphs; // 文档段落集合
 }
 
 /**
@@ -125,11 +125,11 @@ export class EditorStateManager {
         this.registerEditor(editor);
 
         if (!this.editorStates.has(uri)) {
-            this.editorStates.set(uri, {
+            // 创建一个新的编辑器状态
+            const newState: EditorState = {
                 uri,
                 isCorrectingInProgress: false,
                 originalDocumentContent: '',
-                paragraphCorrections: [],
                 changes: [],
                 currentChangeIndex: 0,
                 isCancelled: false,
@@ -139,9 +139,12 @@ export class EditorStateManager {
                     totalInputTokens: 0,
                     totalOutputTokens: 0,
                     totalCost: 0,
-                    currency: '元'
-                }
-            });
+                    currency: 'USD'
+                },
+                documentParagraphs: undefined // 文档段落集合，将在需要时初始化
+            };
+            
+            this.editorStates.set(uri, newState);
         }
 
         return this.editorStates.get(uri)!;
@@ -172,7 +175,9 @@ export class EditorStateManager {
      */
     public clearEditorCorrectionState(editor: vscode.TextEditor): void {
         const state = this.getEditorState(editor);
-        state.paragraphCorrections = [];
+        // 清除段落数据
+        state.documentParagraphs = undefined;
+        // 清除其他状态
         state.changes = [];
         state.currentChangeIndex = 0;
         state.isCancelled = false;
@@ -193,7 +198,7 @@ export class EditorStateManager {
      */
     public hasChanges(editor: vscode.TextEditor): boolean {
         const state = this.getEditorState(editor);
-        return state.changes.length > 0 || state.paragraphCorrections.some(pc => pc.status === ParagraphStatus.Pending);
+        return state.changes.length > 0 || (state.documentParagraphs?.paragraphs.some(p => p.status === ParagraphStatus.Pending) ?? false);
     }
 
 
@@ -206,29 +211,22 @@ export class EditorStateManager {
         return state.isCorrectingInProgress;
     }
 
-    /**
-     * 获取编辑器的段落纠正信息
-     */
-    public getParagraphCorrections(editor: vscode.TextEditor): ParagraphCorrection[] {
-        const state = this.getEditorState(editor);
-        return state.paragraphCorrections;
-    }
 
+    
     /**
-     * 设置编辑器的段落纠正信息
+     * 获取文档段落集合 (新模型)
      */
-    public setParagraphCorrections(editor: vscode.TextEditor, corrections: ParagraphCorrection[]): void {
+    public getDocumentParagraphs(editor: vscode.TextEditor): DocumentParagraphs | undefined {
         const state = this.getEditorState(editor);
-        state.paragraphCorrections = corrections;
-        this._onDidChangeEditorState.fire(state.uri);
+        return state.documentParagraphs;
     }
-
+    
     /**
-     * 添加段落纠正信息
+     * 设置文档段落集合 (新模型)
      */
-    public addParagraphCorrection(editor: vscode.TextEditor, correction: ParagraphCorrection): void {
+    public setDocumentParagraphs(editor: vscode.TextEditor, paragraphs: DocumentParagraphs): void {
         const state = this.getEditorState(editor);
-        state.paragraphCorrections.push(correction);
+        state.documentParagraphs = paragraphs;
         this._onDidChangeEditorState.fire(state.uri);
     }
 

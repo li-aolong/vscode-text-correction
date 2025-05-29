@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
-import { CorrectionService, ParagraphIdentifier, ParagraphStatus } from '../services/correctionService';
+import { CorrectionService } from '../services/correctionService';
+import { ParagraphModel, ParagraphStatus } from '../models/paragraphModel';
 
 export class ParagraphCodeLensProvider implements vscode.CodeLensProvider {
     private _onDidChangeCodeLenses: vscode.EventEmitter<void> = new vscode.EventEmitter<void>();
@@ -26,36 +27,39 @@ export class ParagraphCodeLensProvider implements vscode.CodeLensProvider {
             return lenses;
         }
 
-        // 确保 getParagraphCorrections 方法存在于 CorrectionService 中
-        if (!this.correctionService.getParagraphCorrections) {
-            console.warn('CorrectionService.getParagraphCorrections is not available.');
+        // 使用新的方法获取段落
+        const docParagraphs = this.correctionService.getDocumentParagraphs(editor);
+        if (!docParagraphs || !docParagraphs.paragraphs) {
+            console.warn('无法获取文档段落数据');
             return lenses;
         }
-        const paragraphCorrections = this.correctionService.getParagraphCorrections(editor);
+        const paragraphs = docParagraphs.paragraphs;
 
-        for (const pc of paragraphCorrections) {
-            const range = new vscode.Range(pc.range.start.line, 0, pc.range.start.line, 0); // CodeLens 放在段落首行
+        for (const paragraph of paragraphs) {
+            // 创建段落首行的范围
+            const startLine = paragraph.startLine;
+            const range = new vscode.Range(startLine, 0, startLine, 0); // CodeLens 放在段落首行
 
-            if (pc.status === ParagraphStatus.Pending && pc.id) {
+            if (paragraph.status === ParagraphStatus.Pending && paragraph.id) {
                 const acceptCommand: vscode.Command = {
                     title: "✅ 接受此段落",
                     command: "textCorrection.acceptParagraph",
-                    arguments: [pc.id] // 传递 ParagraphIdentifier
+                    arguments: [paragraph.id] // 传递段落ID
                 };
                 lenses.push(new vscode.CodeLens(range, acceptCommand));
 
                 const rejectCommand: vscode.Command = {
                     title: "❌ 拒绝此段落",
                     command: "textCorrection.rejectParagraph",
-                    arguments: [pc.id] // 传递 ParagraphIdentifier
+                    arguments: [paragraph.id] // 传递段落ID
                 };
                 lenses.push(new vscode.CodeLens(range, rejectCommand));
-            } else if (pc.status === ParagraphStatus.Error && pc.id) {
+            } else if (paragraph.status === ParagraphStatus.Error && paragraph.id) {
                 // 为错误状态的段落显示简化的错误信息
                 const errorCommand: vscode.Command = {
                     title: `❗ 纠错失败`,
                     command: "textCorrection.dismissError",
-                    arguments: [pc.id] // 只传递段落ID用于关闭
+                    arguments: [paragraph.id] // 只传递段落ID用于关闭
                 };
                 lenses.push(new vscode.CodeLens(range, errorCommand));
             }
