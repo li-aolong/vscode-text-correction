@@ -12,7 +12,6 @@ export interface ChangeInfo {
     corrected: string;
     diffs: CharDiff[];
     accepted?: boolean;
-    webviewPanel?: vscode.WebviewPanel;
 }
 
 interface EditorDecorations {
@@ -197,12 +196,7 @@ export class DiffManager {
 
     public clearChangesForEditor(editor: vscode.TextEditor): void {
         const changes = this.editorStateManager.getChanges(editor);
-        changes.forEach(change => {
-            if (change.webviewPanel) {
-                change.webviewPanel.dispose();
-            }
-        });
-
+        
         this.editorStateManager.setChanges(editor, []);
         this.editorStateManager.updateEditorState(editor, { currentChangeIndex: 0 });
         this.clearDecorationsForEditor(editor);
@@ -226,9 +220,6 @@ export class DiffManager {
         const changes = this.editorStateManager.getChanges(editor);
         changes.forEach(change => {
             change.accepted = true;
-            if (change.webviewPanel) {
-                change.webviewPanel.dispose();
-            }
         });
         this.clearDecorations();
 
@@ -286,12 +277,6 @@ export class DiffManager {
             });
         }
 
-        changes.forEach(change => {
-            if (change.webviewPanel) {
-                change.webviewPanel.dispose();
-            }
-        });
-
         // (确保在所有修改被拒绝并恢复后)
         return this.saveCurrentFile().then(() => {
             vscode.window.showInformationMessage(`已拒绝所有 ${changes.length} 处修改并保存文件`);
@@ -317,6 +302,9 @@ export class DiffManager {
         const newIndex = (state.currentChangeIndex + 1) % changes.length;
         this.editorStateManager.updateEditorState(editor, { currentChangeIndex: newIndex });
         this.highlightCurrentChange();
+        
+        // 更新状态栏
+        vscode.commands.executeCommand('textCorrection.updateStatusBar');
     }
 
     public goToPreviousChange(): void {
@@ -334,6 +322,9 @@ export class DiffManager {
         const newIndex = (state.currentChangeIndex - 1 + changes.length) % changes.length;
         this.editorStateManager.updateEditorState(editor, { currentChangeIndex: newIndex });
         this.highlightCurrentChange();
+        
+        // 更新状态栏
+        vscode.commands.executeCommand('textCorrection.updateStatusBar');
     }
 
     private updateDecorations(): void {
@@ -496,492 +487,178 @@ export class DiffManager {
 
         const currentChange = changes[state.currentChangeIndex];
 
+        // 高亮当前修改
         editor.setDecorations(decorations.highlightDecorationType, [currentChange.range]);
-
-        editor.selection = new vscode.Selection(currentChange.range.start, currentChange.range.end);
-        editor.revealRange(currentChange.range, vscode.TextEditorRevealType.InCenter);
-
-        this.showActionPanel(currentChange);
-    }
-
-    private showActionPanel(change: ChangeInfo): void {
-        if (change.webviewPanel) {
-            change.webviewPanel.dispose();
-        }
-
-        const editor = this.editorStateManager.getValidEditor();
-        if (!editor) return;
-
-        const changes = this.editorStateManager.getChanges(editor);
-        const state = this.editorStateManager.getEditorState(editor);
-
-        const changeNumber = state.currentChangeIndex + 1;
-        const totalChanges = changes.length;
-        const diffText = this.formatDiffForDisplay(change.diffs);
-
-        const panel = vscode.window.createWebviewPanel(
-            'textCorrectionDiff',
-            `修改 ${changeNumber}/${totalChanges}`,
-            vscode.ViewColumn.Beside,
-            {
-                enableScripts: true,
-                retainContextWhenHidden: true
-            }
+        
+        // 滚动编辑器到当前修改位置
+        editor.revealRange(
+            currentChange.range, 
+            vscode.TextEditorRevealType.InCenterIfOutsideViewport
         );
+        
+        // 设置定时器，使高亮短暂显示后消失
+        setTimeout(() => {
+            // 确保编辑器仍然有效
+            if (editor && this.editorStateManager.isEditorValid(editor)) {
+                editor.setDecorations(decorations.highlightDecorationType, []);
+            }
+        }, 1500); // 1.5秒后清除高亮
+    }
 
-        change.webviewPanel = panel;
+    private clearDecorations(): void {
+        const editor = this.editorStateManager.getValidEditor();
+        if (editor) {
+            this.clearDecorationsForEditor(editor);
+        }
+    }
 
-        panel.webview.html = this.getWebviewContent(diffText, changeNumber, totalChanges);
+    public clearDecorationsForEditor(editor: vscode.TextEditor): void {
+        if (editor && this.editorStateManager.isEditorValid(editor)) {
+            const decorations = this.getOrCreateDecorations(editor);
+            editor.setDecorations(decorations.deleteDecorationType, []);
+            editor.setDecorations(decorations.insertDecorationType, []);
+            editor.setDecorations(decorations.highlightDecorationType, []);
+        }
+    }
 
-        panel.webview.onDidReceiveMessage(async message => {
-            switch (message.command) {
-                case 'accept':
-                    await this.acceptSingleChange(change);
-                    break;
-                case 'reject':
-                    await this.rejectSingleChange(change);
-                    break;
-                case 'previous':
-                    this.goToPreviousChange();
-                    break;
-                case 'next':
-                    this.goToNextChange();
-                    break;
-                case 'acceptAll':
+    /**
+     * 公开的段落拒绝方法
+     */
+    public async rejectParagraphChange(change: ChangeInfo): Promise<void> {
+        // 找到包含这个change的编辑器
+        let targetEditor: vscode.TextEditor | undefined;
+
+        for (const editor of vscode.window.visibleTextEditors) {
+            const changes = this.editorStateManager.getChanges(editor);
+            if (changes.includes(change)) {
+                targetEditor = editor;
+                break;
+            }
+        }
+
+        if (!targetEditor) {
+            targetEditor = this.editorStateManager.getValidEditor();
+        }
+
+        if (!targetEditor || !this.editorStateManager.isEditorValid(targetEditor)) {
+            vscode.window.showErrorMessage('拒绝段落修改失败: 找不到有效的编辑器');
+            return;
+        }
+
+        try {
+            // 简单地从变更列表中移除
+            this.removeChangeFromList(change, targetEditor);
+            this.updateDecorationsForEditor(targetEditor);
+        } catch (error) {
+            vscode.window.showErrorMessage(`拒绝段落修改失败: ${error instanceof Error ? error.message : String(error)}`);
+        }
+    }
+
+    /**
+     * 显示全局操作按钮（接受全部/拒绝全部）的提示信息
+     */
+    public showGlobalActionButtons(): void {
+        const editor = this.editorStateManager.getValidEditor();
+        if (!editor) {
+            return;
+        }
+
+        if (!this.hasChanges()) {
+            vscode.window.showInformationMessage("没有检测到任何更改。");
+            return;
+        }
+
+        const message = "文本纠正完成，请选择操作：";
+        const acceptAllOption = "✓ 接受全部";
+        const rejectAllOption = "✗ 拒绝全部";
+
+        vscode.window.showInformationMessage(message, acceptAllOption, rejectAllOption)
+            .then(selection => {
+                if (selection === acceptAllOption) {
                     this.acceptAllChanges();
-                    break;
-                case 'rejectAll':
+                } else if (selection === rejectAllOption) {
                     this.rejectAllChanges();
-                    break;
-            }
-        });
-
-        panel.onDidDispose(() => {
-            if (change.webviewPanel === panel) {
-                change.webviewPanel = undefined;
-            }
-        });
-    }
-
-    private getWebviewContent(diffText: string, changeNumber: number, totalChanges: number): string {
-        return `
-        <!DOCTYPE html>
-        <html lang="en">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>文本修改</title>
-            <style>
-                body {
-                    font-family: var(--vscode-font-family);
-                    font-size: var(--vscode-font-size);
-                    color: var(--vscode-foreground);
-                    background-color: var(--vscode-editor-background);
-                    padding: 20px;
-                    margin: 0;
+                } else {
+                    this.rejectAllChanges();
                 }
-                .diff-container {
-                    background-color: var(--vscode-editor-background);
-                    border: 1px solid var(--vscode-panel-border);
-                    border-radius: 5px;
-                    padding: 15px;
-                    margin-bottom: 20px;
-                    font-family: var(--vscode-editor-font-family);
-                    font-size: var(--vscode-editor-font-size);
-                    line-height: 1.5;
-                }
-                .diff-text {
-                    white-space: pre-wrap;
-                    word-wrap: break-word;
-                }
-                .delete {
-                    background-color: rgba(255, 0, 0, 0.3);
-                    text-decoration: line-through;
-                    color: #ff4444;
-                }
-                .insert {
-                    background-color: rgba(0, 255, 0, 0.3);
-                    color: #00aa00;
-                    font-weight: bold;
-                }
-                .button-group {
-                    display: flex;
-                    gap: 10px;
-                    flex-wrap: wrap;
-                    margin-bottom: 15px;
-                }
-                .nav-group {
-                    display: flex;
-                    gap: 10px;
-                    flex-wrap: wrap;
-                }
-                button {
-                    background-color: var(--vscode-button-background);
-                    color: var(--vscode-button-foreground);
-                    border: none;
-                    padding: 8px 16px;
-                    border-radius: 3px;
-                    cursor: pointer;
-                    font-size: 13px;
-                }
-                button:hover {
-                    background-color: var(--vscode-button-hoverBackground);
-                }
-                .accept-btn {
-                    background-color: var(--vscode-button-background);
-                }
-                .reject-btn {
-                    background-color: var(--vscode-button-secondaryBackground);
-                    color: var(--vscode-button-secondaryForeground);
-                }
-                .nav-btn {
-                    background-color: var(--vscode-button-background);
-                }
-                .batch-btn {
-                    background-color: var(--vscode-button-background);
-                }
-                .title {
-                    font-size: 16px;
-                    font-weight: bold;
-                    margin-bottom: 15px;
-                    color: var(--vscode-foreground);
-                }
-            </style>
-        </head>
-        <body>
-            <div class="title">修改 ${changeNumber}/${totalChanges}</div>
-
-            <div class="diff-container">
-                <div class="diff-text">${this.formatDiffForHtml(diffText)}</div>
-            </div>
-
-            <div class="button-group">
-                <button class="accept-btn" onclick="sendMessage('accept')">✓ 接受此修改</button>
-                <button class="reject-btn" onclick="sendMessage('reject')">✗ 拒绝此修改</button>
-            </div>
-
-            <div class="nav-group">
-                <button class="nav-btn" onclick="sendMessage('previous')">← 上一个</button>
-                <button class="nav-btn" onclick="sendMessage('next')">下一个 →</button>
-            </div>
-
-            <div class="button-group" style="margin-top: 20px;">
-                <button class="batch-btn" onclick="sendMessage('acceptAll')">接受全部修改</button>
-                <button class="batch-btn" onclick="sendMessage('rejectAll')">拒绝全部修改</button>
-            </div>
-
-            <script>
-                const vscode = acquireVsCodeApi();
-
-                function sendMessage(command) {
-                    vscode.postMessage({ command: command });
-                }
-            </script>
-        </body>
-        </html>`;
-    }
-
-    private formatDiffForDisplay(diffs: CharDiff[]): string {
-        let result = '';
-        diffs.forEach(diff => {
-            switch (diff.type) {
-                case 'delete':
-                    result += `[-${diff.text}]`;
-                    break;
-                case 'insert':
-                    result += `[+${diff.text}]`;
-                    break;
-                case 'equal':
-                    result += diff.text;
-                    break;
-            }
-        });
-        return result;
-    }
-
-    private formatDiffForHtml(diffText: string): string {
-    // 先对文本内容进行HTML特殊字符转义
-    let escapedText = diffText
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;');
-
-    // 然后添加HTML标签
-    return escapedText
-        .replace(/\[-(.*?)\]/g, '<span class="delete">$1</span>')
-        .replace(/\[\+(.*?)\]/g, '<span class="insert">$1</span>');
-}
-
-private async acceptSingleChange(change: ChangeInfo): Promise<void> {
-    // 找到包含这个change的编辑器
-    let targetEditor: vscode.TextEditor | undefined;
-
-    for (const editor of vscode.window.visibleTextEditors) {
-        const changes = this.editorStateManager.getChanges(editor);
-        if (changes.includes(change)) {
-            targetEditor = editor;
-            break;
-        }
-    }
-
-    if (!targetEditor) {
-        targetEditor = this.editorStateManager.getValidEditor();
-    }
-
-    if (!targetEditor || !this.editorStateManager.isEditorValid(targetEditor)) {
-        console.warn('No valid editor available for acceptSingleChange');
-        vscode.window.showErrorMessage('接受修改失败: 找不到有效的编辑器');
-        return;
-    }
-
-    try {
-        // 使用WorkspaceEdit进行更可靠的编辑，应用纠正后的文本
-        const workspaceEdit = new vscode.WorkspaceEdit();
-        workspaceEdit.replace(targetEditor.document.uri, change.range, change.corrected);
-
-        const success = await vscode.workspace.applyEdit(workspaceEdit);
-
-        if (!success) {
-            // 如果WorkspaceEdit失败，回退到直接编辑器操作
-            console.warn('WorkspaceEdit failed, falling back to direct editor edit');
-            const editorSuccess = await targetEditor.edit(editBuilder => {
-                editBuilder.replace(change.range, change.corrected);
             });
-
-            if (!editorSuccess) {
-                throw new Error('Both WorkspaceEdit and direct editor edit failed');
-            }
-        }
-
-        change.accepted = true;
-        if (change.webviewPanel) {
-            change.webviewPanel.dispose();
-            change.webviewPanel = undefined;
-        }
-
-        this.removeChangeFromList(change, targetEditor);
-        this.updateDecorationsForEditor(targetEditor);
-
-    } catch (error) {
-        console.error('Error applying accept change:', error);
-        vscode.window.showErrorMessage(`接受修改失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-}
-
-private async rejectSingleChange(change: ChangeInfo): Promise<void> {
-    // 首先尝试找到包含这个change的编辑器
-    let targetEditor: vscode.TextEditor | undefined;
-    let targetUri: string | undefined;
-
-    // 遍历所有编辑器状态，找到包含这个change的编辑器
-    for (const editor of vscode.window.visibleTextEditors) {
-        const changes = this.editorStateManager.getChanges(editor);
-        if (changes.includes(change)) {
-            targetEditor = editor;
-            targetUri = editor.document.uri.toString();
-            break;
-        }
     }
 
-    // 如果没找到可见的编辑器，尝试从所有编辑器状态中查找
-    if (!targetEditor) {
-        // 这里需要遍历所有编辑器状态来找到包含这个change的编辑器
-        targetEditor = this.editorStateManager.getValidEditor();
-        if (targetEditor) {
-            targetUri = targetEditor.document.uri.toString();
-        }
-    }
-
-    if (!targetEditor) {
-        console.warn('No valid editor available for rejectSingleChange');
-        vscode.window.showErrorMessage('拒绝修改失败: 找不到有效的编辑器');
-        return;
-    }
-
-    // 重新验证编辑器是否仍然有效
-    if (!this.editorStateManager.isEditorValid(targetEditor)) {
-        console.warn('Editor is no longer valid for rejectSingleChange');
-        vscode.window.showErrorMessage('拒绝修改失败: 编辑器已失效');
-        return;
-    }
-
-    try {
-        // 验证range是否仍然有效
-        const document = targetEditor.document;
-        if (change.range.end.line >= document.lineCount) {
-            console.warn('Change range is out of bounds, attempting to fix');
-            // 尝试修复range
-            const lastLine = document.lineCount - 1;
-            const lastLineLength = document.lineAt(lastLine).text.length;
-            change.range = new vscode.Range(
-                change.range.start,
-                new vscode.Position(lastLine, lastLineLength)
-            );
-        }
-
-        // 验证当前文档内容是否与期望的纠正文本匹配
-        const currentText = document.getText(change.range);
-        if (currentText !== change.corrected) {
-            console.warn('Current text does not match expected corrected text, attempting to find correct range');
-            // 尝试在文档中查找纠正后的文本
-            const fullText = document.getText();
-            const correctedIndex = fullText.indexOf(change.corrected);
-            if (correctedIndex !== -1) {
-                // 重新计算range
-                const startPos = document.positionAt(correctedIndex);
-                const endPos = document.positionAt(correctedIndex + change.corrected.length);
-                change.range = new vscode.Range(startPos, endPos);
-            } else {
-                throw new Error('Cannot find corrected text in document');
-            }
-        }
-
-        // 使用WorkspaceEdit进行更可靠的编辑
-        const workspaceEdit = new vscode.WorkspaceEdit();
-        workspaceEdit.replace(targetEditor.document.uri, change.range, change.original);
-
-        const success = await vscode.workspace.applyEdit(workspaceEdit);
-
-        if (!success) {
-            // 如果WorkspaceEdit失败，等待一小段时间后重试直接编辑器操作
-            console.warn('WorkspaceEdit failed, waiting and retrying with direct editor edit');
-            await new Promise(resolve => setTimeout(resolve, 100));
-
-            // 重新验证编辑器是否仍然有效
-            if (!this.editorStateManager.isEditorValid(targetEditor)) {
-                throw new Error('Editor became invalid during operation');
-            }
-
-            const editorSuccess = await targetEditor.edit(editBuilder => {
-                editBuilder.replace(change.range, change.original);
-            });
-
-            if (!editorSuccess) {
-                throw new Error('Both WorkspaceEdit and direct editor edit failed');
-            }
-        }
-
-        if (change.webviewPanel) {
-            change.webviewPanel.dispose();
-            change.webviewPanel = undefined;
-        }
-
-        this.removeChangeFromList(change, targetEditor);
-        this.updateDecorationsForEditor(targetEditor);
-
-    } catch (error) {
-        console.error('Error applying reject change:', error);
-        vscode.window.showErrorMessage(`拒绝修改失败: ${error instanceof Error ? error.message : String(error)}`);
-    }
-}
-
-private removeChangeFromList(change: ChangeInfo, targetEditor?: vscode.TextEditor): void {
-    const editor = targetEditor || this.editorStateManager.getValidEditor();
-    if (!editor) {
-        console.warn('No valid editor available for removeChangeFromList');
-        return;
-    }
-
-    this.editorStateManager.removeChange(editor, change);
-
-    const changes = this.editorStateManager.getChanges(editor);
-    const state = this.editorStateManager.getEditorState(editor);
-
-    if (state.currentChangeIndex >= changes.length) {
-        this.editorStateManager.updateEditorState(editor, {
-            currentChangeIndex: Math.max(0, changes.length - 1)
-        });
-    }
-}
-
-private clearDecorations(): void {
-    const editor = this.editorStateManager.getValidEditor();
-    if (editor) {
-        this.clearDecorationsForEditor(editor);
-    }
-}
-
-public clearDecorationsForEditor(editor: vscode.TextEditor): void {
-    if (editor && this.editorStateManager.isEditorValid(editor)) {
-        const decorations = this.getOrCreateDecorations(editor);
-        editor.setDecorations(decorations.deleteDecorationType, []);
-        editor.setDecorations(decorations.insertDecorationType, []);
-        editor.setDecorations(decorations.highlightDecorationType, []);
-    }
-}
-
-/**
- * 公开的段落拒绝方法
- */
-public async rejectParagraphChange(change: ChangeInfo): Promise<void> {
-    return this.rejectSingleChange(change);
-}
-
-/**
- * 显示全局操作按钮（接受全部/拒绝全部）的提示信息
- */
-public showGlobalActionButtons(): void {
-    const editor = this.editorStateManager.getValidEditor();
-    if (!editor) {
-        return;
-    }
-
-    if (!this.hasChanges()) {
-        vscode.window.showInformationMessage("没有检测到任何更改。");
-        return;
-    }
-
-    const message = "文本纠正完成，请选择操作：";
-    const acceptAllOption = "✓ 接受全部";
-    const rejectAllOption = "✗ 拒绝全部";
-
-    vscode.window.showInformationMessage(message, acceptAllOption, rejectAllOption)
-        .then(selection => {
-            if (selection === acceptAllOption) {
-                this.acceptAllChanges();
-            } else if (selection === rejectAllOption) {
-                this.rejectAllChanges();
-            } else {
-                this.rejectAllChanges();
-            }
-        });
-}
-
-public dispose(): void {
-    // 清理所有编辑器的changes
-    for (const editor of vscode.window.visibleTextEditors) {
-        const changes = this.editorStateManager.getChanges(editor);
-        changes.forEach(change => {
-            if (change.webviewPanel) {
-                change.webviewPanel.dispose();
-            }
-        });
-    }
-
-    // 清理所有编辑器的装饰类型
-    for (const decorations of this.editorDecorations.values()) {
-        decorations.deleteDecorationType.dispose();
-        decorations.insertDecorationType.dispose();
-        decorations.highlightDecorationType.dispose();
-    }
-    this.editorDecorations.clear();
-}
-
-/**
- * 清理已关闭编辑器的装饰
- */
-public cleanupClosedEditors(): void {
-    const openUris = new Set(
-        vscode.window.visibleTextEditors.map(editor => editor.document.uri.toString())
-    );
-
-    for (const [uri, decorations] of this.editorDecorations.entries()) {
-        if (!openUris.has(uri)) {
+    public dispose(): void {
+        // 清理所有编辑器的装饰类型
+        for (const decorations of this.editorDecorations.values()) {
             decorations.deleteDecorationType.dispose();
             decorations.insertDecorationType.dispose();
             decorations.highlightDecorationType.dispose();
-            this.editorDecorations.delete(uri);
+        }
+        this.editorDecorations.clear();
+    }
+
+    /**
+     * 清理已关闭编辑器的装饰
+     */
+    public cleanupClosedEditors(): void {
+        const openUris = new Set(
+            vscode.window.visibleTextEditors.map(editor => editor.document.uri.toString())
+        );
+
+        for (const [uri, decorations] of this.editorDecorations.entries()) {
+            if (!openUris.has(uri)) {
+                decorations.deleteDecorationType.dispose();
+                decorations.insertDecorationType.dispose();
+                decorations.highlightDecorationType.dispose();
+                this.editorDecorations.delete(uri);
+            }
         }
     }
-}
+
+    private removeChangeFromList(change: ChangeInfo, targetEditor?: vscode.TextEditor): void {
+        const editor = targetEditor || this.editorStateManager.getValidEditor();
+        if (!editor) {
+            console.warn('No valid editor available for removeChangeFromList');
+            return;
+        }
+
+        // 获取当前索引和变更总数
+        const state = this.editorStateManager.getEditorState(editor);
+        const currentIndex = state.currentChangeIndex;
+        const changes = this.editorStateManager.getChanges(editor);
+        const totalChanges = changes.length;
+        
+        // 找到要删除的变更的索引
+        const indexToRemove = changes.indexOf(change);
+        if (indexToRemove === -1) {
+            return; // 没有找到要删除的变更
+        }
+        
+        // 从变更列表中移除
+        this.editorStateManager.removeChange(editor, change);
+        
+        // 获取更新后的变更列表和总数
+        const updatedChanges = this.editorStateManager.getChanges(editor);
+        const updatedTotal = updatedChanges.length;
+        
+        // 更新当前索引
+        let newIndex = currentIndex;
+        
+        // 如果删除的是当前显示的变更
+        if (indexToRemove === currentIndex) {
+            // 如果删除的是最后一个，则指向新的最后一个
+            if (indexToRemove >= updatedTotal) {
+                newIndex = Math.max(0, updatedTotal - 1);
+            }
+            // 否则保持当前索引不变（因为后面的变更会自动前移）
+        }
+        // 如果删除的是当前显示的变更之前的变更
+        else if (indexToRemove < currentIndex) {
+            // 当前索引需要减1，因为前面少了一个变更
+            newIndex = Math.max(0, currentIndex - 1);
+        }
+        // 如果删除的是当前显示的变更之后的变更，当前索引不变
+        
+        // 更新编辑器状态
+        this.editorStateManager.updateEditorState(editor, {
+            currentChangeIndex: newIndex
+        });
+    }
 }

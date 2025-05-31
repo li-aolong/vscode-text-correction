@@ -12,6 +12,9 @@ interface EditorStatusBarItems {
     cancelStatusBarItem: vscode.StatusBarItem;
     acceptAllStatusBarItem: vscode.StatusBarItem;
     rejectAllStatusBarItem: vscode.StatusBarItem;
+    prevChangeStatusBarItem: vscode.StatusBarItem; // 上一个修改按钮
+    nextChangeStatusBarItem: vscode.StatusBarItem; // 下一个修改按钮
+    navigationProgressStatusBarItem: vscode.StatusBarItem; // 导航进度显示
 }
 
 /**
@@ -62,11 +65,14 @@ export class StatusBarManager {
         if (!this.editorStatusBars.has(uri)) {
             const items: EditorStatusBarItems = {
                 uri,
-                costStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5), // 花费信息在最左边
-                correctionStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 4),
-                cancelStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 3),
-                acceptAllStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 2),
-                rejectAllStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1)
+                costStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 8), // 花费信息在最左边
+                correctionStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 7),
+                cancelStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 6),
+                acceptAllStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 5),
+                rejectAllStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 4),
+                prevChangeStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 3),
+                nextChangeStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 2),
+                navigationProgressStatusBarItem: vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Left, 1)
             };
 
             // 设置花费信息状态栏项的初始状态
@@ -91,6 +97,24 @@ export class StatusBarManager {
             items.rejectAllStatusBarItem.text = "$(close-all) 全拒绝";
             items.rejectAllStatusBarItem.command = 'textCorrection.rejectAllChanges';
             items.rejectAllStatusBarItem.tooltip = "拒绝所有更改";
+
+            // 设置上一个修改按钮
+            items.prevChangeStatusBarItem.text = "$(arrow-left) 上一个";
+            items.prevChangeStatusBarItem.command = 'textCorrection.prevChange';
+            items.prevChangeStatusBarItem.tooltip = "上一个修改";
+            items.prevChangeStatusBarItem.color = new vscode.ThemeColor('statusBar.foreground');
+            items.prevChangeStatusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground'); // 黄色
+
+            // 设置下一个修改按钮
+            items.nextChangeStatusBarItem.text = "下一个 $(arrow-right)";
+            items.nextChangeStatusBarItem.command = 'textCorrection.nextChange';
+            items.nextChangeStatusBarItem.tooltip = "下一个修改";
+            items.nextChangeStatusBarItem.color = new vscode.ThemeColor('statusBar.foreground');
+            items.nextChangeStatusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground'); // 黄色
+
+            // 设置导航进度显示
+            items.navigationProgressStatusBarItem.text = "$(location)";
+            items.navigationProgressStatusBarItem.tooltip = "导航进度";
 
             this.editorStatusBars.set(uri, items);
         }
@@ -140,6 +164,9 @@ export class StatusBarManager {
             items.cancelStatusBarItem.hide();
             items.acceptAllStatusBarItem.hide();
             items.rejectAllStatusBarItem.hide();
+            items.prevChangeStatusBarItem.hide();
+            items.nextChangeStatusBarItem.hide();
+            items.navigationProgressStatusBarItem.hide();
         }
     }
 
@@ -162,12 +189,24 @@ export class StatusBarManager {
                 items.correctionStatusBarItem.tooltip = "正在进行文本纠错，请稍候...";
             }
             items.cancelStatusBarItem.show();
+            
+            // 确保导航按钮的背景色正确设置
+            items.prevChangeStatusBarItem.color = new vscode.ThemeColor('statusBar.foreground');
+            items.prevChangeStatusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+            items.nextChangeStatusBarItem.color = new vscode.ThemeColor('statusBar.foreground');
+            items.nextChangeStatusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
         } else if (this.editorStateManager.hasChanges(editor)) {
             // 有diff信息时禁用全文纠错按钮
             items.correctionStatusBarItem.command = undefined; // 禁用命令
-            items.correctionStatusBarItem.text = "$(check) 纠错完成 (请先处理当前修改)";
+            items.correctionStatusBarItem.text = "$(check) 纠错完成";
             items.correctionStatusBarItem.tooltip = "纠错已完成，请先处理当前的修改建议";
             items.cancelStatusBarItem.hide();
+            
+            // 确保导航按钮的背景色正确设置
+            items.prevChangeStatusBarItem.color = new vscode.ThemeColor('statusBar.foreground');
+            items.prevChangeStatusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
+            items.nextChangeStatusBarItem.color = new vscode.ThemeColor('statusBar.foreground');
+            items.nextChangeStatusBarItem.backgroundColor = new vscode.ThemeColor('statusBarItem.warningBackground');
         } else {
             // 没有纠错进行中，也没有待处理的修改
             items.correctionStatusBarItem.text = "$(pencil) 全文纠错";
@@ -306,13 +345,52 @@ export class StatusBarManager {
         if (this.editorStateManager.hasChanges(editor)) {
             items.acceptAllStatusBarItem.show();
             items.rejectAllStatusBarItem.show();
+            
+            // 显示导航按钮
+            items.prevChangeStatusBarItem.show();
+            items.nextChangeStatusBarItem.show();
+            items.navigationProgressStatusBarItem.show();
+            
+            // 更新导航进度
+            this.updateNavigationProgress(editor, items);
         } else {
             items.acceptAllStatusBarItem.hide();
             items.rejectAllStatusBarItem.hide();
+            
+            // 隐藏导航按钮
+            items.prevChangeStatusBarItem.hide();
+            items.nextChangeStatusBarItem.hide();
+            items.navigationProgressStatusBarItem.hide();
         }
     }
 
-
+    /**
+     * 更新导航进度显示
+     */
+    private updateNavigationProgress(editor: vscode.TextEditor, items: EditorStatusBarItems): void {
+        const state = this.editorStateManager.getEditorState(editor);
+        const changes = state.changes;
+        
+        if (changes.length > 0) {
+            const currentIndex = state.currentChangeIndex;
+            const total = changes.length;
+            
+            // 确保currentIndex在有效范围内
+            const validIndex = Math.min(Math.max(0, currentIndex), total - 1);
+            const current = validIndex + 1; // 从0开始的索引转为从1开始的计数
+            
+            // 更新导航进度文本
+            items.navigationProgressStatusBarItem.text = `$(location) ${current}/${total}`;
+            
+            // 更新提示信息
+            items.navigationProgressStatusBarItem.tooltip = `当前位置: ${current}/${total}`;
+            
+            // 确保背景色一致
+        } else {
+            items.navigationProgressStatusBarItem.text = "$(location)";
+            items.navigationProgressStatusBarItem.hide();
+        }
+    }
 
     /**
      * 清理已关闭编辑器的状态栏
@@ -330,6 +408,9 @@ export class StatusBarManager {
                 items.cancelStatusBarItem.dispose();
                 items.acceptAllStatusBarItem.dispose();
                 items.rejectAllStatusBarItem.dispose();
+                items.prevChangeStatusBarItem.dispose();
+                items.nextChangeStatusBarItem.dispose();
+                items.navigationProgressStatusBarItem.dispose();
 
                 // 从映射中移除
                 this.editorStatusBars.delete(uri);
@@ -348,7 +429,10 @@ export class StatusBarManager {
                 editorItems.correctionStatusBarItem,
                 editorItems.cancelStatusBarItem,
                 editorItems.acceptAllStatusBarItem,
-                editorItems.rejectAllStatusBarItem
+                editorItems.rejectAllStatusBarItem,
+                editorItems.prevChangeStatusBarItem,
+                editorItems.nextChangeStatusBarItem,
+                editorItems.navigationProgressStatusBarItem
             );
         }
         return items;
@@ -369,6 +453,9 @@ export class StatusBarManager {
             items.cancelStatusBarItem.dispose();
             items.acceptAllStatusBarItem.dispose();
             items.rejectAllStatusBarItem.dispose();
+            items.prevChangeStatusBarItem.dispose();
+            items.nextChangeStatusBarItem.dispose();
+            items.navigationProgressStatusBarItem.dispose();
         }
         this.editorStatusBars.clear();
     }

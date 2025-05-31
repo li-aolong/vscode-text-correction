@@ -113,7 +113,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         diffManager.goToNextChange();
     });
 
-    const previousChangeCommand = vscode.commands.registerCommand('textCorrection.previousChange', () => {
+    const previousChangeCommand = vscode.commands.registerCommand('textCorrection.prevChange', () => {
         diffManager.goToPreviousChange();
     });
 
@@ -151,6 +151,11 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
     });
 
+    // 更新状态栏命令
+    const updateStatusBarCommand = vscode.commands.registerCommand('textCorrection.updateStatusBar', () => {
+        updateStatusBarForCurrentEditor();
+    });
+
     context.subscriptions.push(
         correctFullTextCommand,
         cancelCorrectionCommand,
@@ -161,6 +166,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         acceptParagraphCommand,
         rejectParagraphCommand,
         dismissErrorCommand,
+        updateStatusBarCommand,
         statusBarManager,
         diffManager
     );

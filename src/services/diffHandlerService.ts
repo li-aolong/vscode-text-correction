@@ -56,12 +56,6 @@ export class DiffHandlerService {
                     this.editorStateManager.removeChange(editor, changeInfo);
                     console.log(`[CleanupDiff] 已从changes列表中移除ChangeInfo`);
                 }
-
-                // 清理webview面板
-                if (changeInfo.webviewPanel) {
-                    changeInfo.webviewPanel.dispose();
-                    changeInfo.webviewPanel = undefined;
-                }
             } else {
                 console.warn(`[CleanupDiff] 未找到段落 ${paragraph.id} 对应的ChangeInfo`);
                 
@@ -76,10 +70,6 @@ export class DiffHandlerService {
                     console.log(`[CleanupDiff] 找到 ${overlappingChanges.length} 个与段落范围重叠的变更，清理中...`);
                     for (const change of overlappingChanges) {
                         this.editorStateManager.removeChange(editor, change);
-                        if (change.webviewPanel) {
-                            change.webviewPanel.dispose();
-                            change.webviewPanel = undefined;
-                        }
                     }
                 }
             }

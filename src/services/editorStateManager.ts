@@ -264,6 +264,19 @@ export class EditorStateManager {
         const index = state.changes.indexOf(change);
         if (index > -1) {
             state.changes.splice(index, 1);
+            
+            // 如果删除的是当前选中的变更或之前的变更，则需要调整currentChangeIndex
+            if (index <= state.currentChangeIndex && state.changes.length > 0) {
+                // 如果删除的是最后一个变更且currentChangeIndex指向它，则指向新的最后一个
+                if (index === state.currentChangeIndex && index >= state.changes.length) {
+                    state.currentChangeIndex = Math.max(0, state.changes.length - 1);
+                }
+                // 如果删除的是当前变更之前的变更，则currentChangeIndex需要减1
+                else if (index < state.currentChangeIndex) {
+                    state.currentChangeIndex = Math.max(0, state.currentChangeIndex - 1);
+                }
+            }
+            
             this._onDidChangeEditorState.fire(state.uri);
         }
     }
