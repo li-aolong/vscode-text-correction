@@ -88,6 +88,28 @@ function registerCommands(context: vscode.ExtensionContext) {
         }
     });
 
+    // 选中文本纠错命令
+    const correctSelectedTextCommand = vscode.commands.registerCommand('textCorrection.correctSelectedText', async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor) {
+            vscode.window.showErrorMessage('没有打开的编辑器');
+            return;
+        }
+
+        if (!correctionService.hasSelection(editor)) {
+            vscode.window.showInformationMessage('请先选择要纠正的文本');
+            return;
+        }
+
+        try {
+            await correctionService.correctSelectedText(editor);
+        } catch (error) {
+            vscode.window.showErrorMessage(`选中文本纠错失败: ${error}`);
+        } finally {
+            updateStatusBarForCurrentEditor();
+        }
+    });
+
     // 差异管理命令
     const acceptAllCommand = vscode.commands.registerCommand('textCorrection.acceptAllChanges', async () => {
         const editor = vscode.window.activeTextEditor;
@@ -159,6 +181,7 @@ function registerCommands(context: vscode.ExtensionContext) {
     context.subscriptions.push(
         correctFullTextCommand,
         cancelCorrectionCommand,
+        correctSelectedTextCommand,
         acceptAllCommand,
         rejectAllCommand,
         nextChangeCommand,

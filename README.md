@@ -5,6 +5,7 @@
 ## ✨ 主要特性 | Key Features
 
 - **全文纠错** | **Full Text Correction**：一键对整个文档进行智能纠错 | One-click intelligent correction for entire documents
+- **选中纠错** | **Selected Text Correction**：支持只对选中的文本进行纠错 | Support correction of selected text only
 - **段落级处理** | **Paragraph-level Processing**：按段落分别处理，提高准确性和效率 | Process text paragraph by paragraph for better accuracy and efficiency
 - **可视化差异** | **Visual Diff**：高亮显示原文与纠错结果的差异 | Highlight differences between original text and correction results
 - **逐项审核** | **Item-by-item Review**：支持逐个段落接受或拒绝修改建议 | Accept or reject correction suggestions paragraph by paragraph

@@ -31,6 +31,10 @@
         "title": "Text Correction: 取消纠错"
       },
       {
+        "command": "textCorrection.correctSelectedText",
+        "title": "Text Correction: 选中纠错"
+      },
+      {
         "command": "textCorrection.acceptAllChanges",
         "title": "Text Correction: 接受全部修改"
       },
@@ -47,6 +51,15 @@
         "title": "Text Correction: 上一个修改"
       }
     ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "textCorrection.correctSelectedText",
+          "when": "editorHasSelection",
+          "group": "1_modification@1"
+        }
+      ]
+    },
     "configuration": {
       "title": "Text Correction",
       "properties": {

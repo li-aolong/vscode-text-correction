@@ -10,6 +10,7 @@ import { OperationLockService } from './operationLockService';
 import { DiffHandlerService } from './diffHandlerService';
 import { ParagraphActionService } from './paragraphActionService';
 import { CorrectionWorkflowService } from './correctionWorkflowService';
+import { SelectionCorrectionService } from './selectionCorrectionService';
 import { DocumentParagraphs } from '../models/paragraphModel';
 
 export class CorrectionService {
@@ -31,6 +32,7 @@ export class CorrectionService {
     private diffHandlerService: DiffHandlerService;
     private paragraphActionService!: ParagraphActionService; // Definite assignment assertion
     private correctionWorkflowService: CorrectionWorkflowService;
+    private selectionCorrectionService: SelectionCorrectionService;
     private diffManagerInstance: DiffManager | undefined; // Store the DiffManager instance
 
     constructor(configManager: ConfigManager, editorStateManager: EditorStateManager) {
@@ -54,6 +56,17 @@ export class CorrectionService {
             this.costService,
             this._onDidChangeParagraphCorrections
         );
+
+        // 初始化选中纠错服务
+        this.selectionCorrectionService = new SelectionCorrectionService(
+            editorStateManager,
+            this.apiService,
+            this.textProcessingService,
+            this.documentEditService,
+            this.operationLockService,
+            this.diffHandlerService,
+            this._onDidChangeParagraphCorrections
+        );
     }
 
     // 清空指定编辑器的段落状态和差异
@@ -67,6 +80,7 @@ export class CorrectionService {
         // 将DiffManager设置到相关服务类中
         this.diffHandlerService.setDiffManager(diffManager);
         this.correctionWorkflowService.setDiffManager(diffManager);
+        this.selectionCorrectionService.setDiffManager(diffManager);
 
         // NOW instantiate ParagraphActionService as we have the DiffManager
         if (!this.paragraphActionService && this.diffManagerInstance) { // Ensure it's only created once
@@ -104,6 +118,27 @@ export class CorrectionService {
         progressCallback?: (current: number, total: number) => void
     ): Promise<void> {
         return this.correctionWorkflowService.correctFullText(editor, progressCallback);
+    }
+
+    /**
+     * 选中文本纠错
+     */
+    public async correctSelectedText(editor: vscode.TextEditor): Promise<void> {
+        return this.selectionCorrectionService.correctSelectedText(editor);
+    }
+
+    /**
+     * 检查是否有选中的文本
+     */
+    public hasSelection(editor: vscode.TextEditor | undefined): boolean {
+        return this.selectionCorrectionService.hasSelection(editor);
+    }
+
+    /**
+     * 获取当前选中文本的范围
+     */
+    public getSelectionRange(editor: vscode.TextEditor): vscode.Range | undefined {
+        return this.selectionCorrectionService.getSelectionRange(editor);
     }
 
     /**
