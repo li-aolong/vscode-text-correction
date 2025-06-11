@@ -139,6 +139,9 @@ export class SelectionCorrectionService {
         
         console.log(`[UpdatePosition] Starting update. Total paragraphs: ${docParagraphs.paragraphs.length}`);
 
+        // 跟踪累积的行偏移量，用于diff信息更新
+        let accumulatedLineDelta = 0;
+        
         // 使用和全文纠错相同的简单增量更新逻辑
         for (let i = 0; i < docParagraphs.paragraphs.length; i++) {
             const paragraph = docParagraphs.paragraphs[i];
@@ -164,8 +167,8 @@ export class SelectionCorrectionService {
                     console.log(`[UpdatePosition] 更新后续段落 ${nextParagraph.id.substring(0,4)} 起始行号为 ${nextParagraph.startLineNumber}`);
                 }
                 
-                // 更新后续段落对应的diff信息位置
-                this.updateDiffInfoForParagraph(paragraph, editor, ownLineDeltaContribution);
+                // 累积行偏移量
+                accumulatedLineDelta += ownLineDeltaContribution;
             }
             
             // 更新当前段落的范围
@@ -173,10 +176,16 @@ export class SelectionCorrectionService {
             paragraph.endLine = paragraph.range.end.line;
         }
         
+        // 在所有段落位置更新完成后，统一更新diff信息位置
+        if (accumulatedLineDelta !== 0) {
+            console.log(`[UpdatePosition] 总行数变化: ${accumulatedLineDelta}，更新diff信息位置`);
+            this.updateAllDiffInfoPositions(editor);
+        }
+        
         // 保存更新后的段落集合
         this.setDocumentParagraphs(editor, docParagraphs);
         console.log(`[UpdatePosition] Finished update.`);
-    }/**
+    }    /**
      * 更新段落对应的diff信息位置
      * @param paragraph 段落模型
      * @param editor 编辑器
@@ -189,38 +198,17 @@ export class SelectionCorrectionService {
 
         const changes = this.editorStateManager.getChanges(editor);
         
-        // 关键修正：需要找到当前段落在排序后段落列表中的位置，
-        // 然后更新所有在当前段落之后的段落对应的ChangeInfo位置
-        const docParagraphs = this.getDocumentParagraphs(editor);
-        if (!docParagraphs) {
-            return;
-        }
+        // 修复关键逻辑：只更新在当前段落结束行之后的ChangeInfo位置
+        // 这样避免了在多段落纠错时错误更新还未处理段落的diff信息
+        const currentParagraphEndLine = paragraph.range.end.line;
         
-        // 找到当前段落在段落列表中的索引
-        const currentParagraphIndex = docParagraphs.paragraphs.findIndex(p => p.id === paragraph.id);
-        if (currentParagraphIndex === -1) {
-            console.warn(`[UpdatePosition] 无法找到段落 ${paragraph.id} 在文档段落列表中的位置`);
-            return;
-        }
+        const changesToUpdate = changes.filter(change => {
+            // 只更新起始行位置大于当前段落结束行的ChangeInfo
+            // 这确保我们不会影响当前段落内或重叠的diff信息
+            return change.range.start.line > currentParagraphEndLine;
+        });
         
-        // 获取在当前段落之后的所有段落
-        const subsequentParagraphs = docParagraphs.paragraphs.slice(currentParagraphIndex + 1);
-        
-        // 找到这些后续段落对应的ChangeInfo并更新位置
-        const changesToUpdate: ChangeInfo[] = [];
-        for (const laterParagraph of subsequentParagraphs) {
-            const correspondingChange = changes.find(change => {
-                // 通过段落ID或内容匹配来找到对应的ChangeInfo
-                return change.original === laterParagraph.originalContent && 
-                       change.corrected === laterParagraph.correctedContent;
-            });
-            
-            if (correspondingChange) {
-                changesToUpdate.push(correspondingChange);
-            }
-        }
-        
-        console.log(`[UpdatePosition] 段落 ${paragraph.id.substring(0,4)} 引起行数变化 ${lineDelta}，需要更新 ${changesToUpdate.length} 个后续段落的ChangeInfo`);
+        console.log(`[UpdatePosition] 段落 ${paragraph.id.substring(0,4)} 结束于第${currentParagraphEndLine}行，行数变化 ${lineDelta}，需要更新 ${changesToUpdate.length} 个后续的ChangeInfo`);
         
         // 更新这些ChangeInfo的位置
         changesToUpdate.forEach((change, index) => {
@@ -243,6 +231,47 @@ export class SelectionCorrectionService {
         if (changesToUpdate.length > 0) {
             this.diffManager.updateDecorationsForEditor(editor);
         }
+    }
+
+    /**
+     * 更新所有diff信息的位置
+     * 在段落位置发生变化后，重新同步diff信息与段落位置
+     */
+    private updateAllDiffInfoPositions(editor: vscode.TextEditor): void {
+        if (!this.diffManager) {
+            return;
+        }
+
+        const docParagraphs = this.getDocumentParagraphs(editor);
+        if (!docParagraphs) {
+            return;
+        }
+
+        console.log(`[UpdateAllDiffInfo] 开始重建所有diff信息以确保位置正确`);
+
+        // 1. 清除所有现有的diff信息
+        this.editorStateManager.setChanges(editor, []);
+        this.diffManager.clearDecorationsForEditor(editor);
+
+        // 2. 重新为所有Pending状态的段落创建diff信息
+        for (const paragraph of docParagraphs.paragraphs) {
+            if (paragraph.status === ParagraphStatus.Pending && paragraph.correctedContent !== null) {
+                console.log(`[UpdateAllDiffInfo] 重建段落 ${paragraph.id.substring(0,4)} 的diff信息`);
+                
+                // 使用段落当前的正确范围重新添加diff
+                const rangeForDiff = this.calculateOriginalContentRange(paragraph);
+                this.diffManager.addChange(
+                    rangeForDiff,
+                    paragraph.originalContent,
+                    paragraph.correctedContent,
+                    editor
+                );
+            }
+        }
+
+        // 3. 强制更新装饰
+        this.diffManager.updateDecorationsForEditor(editor);
+        console.log(`[UpdateAllDiffInfo] 完成重建所有diff信息`);
     }
 
     /**
@@ -348,8 +377,7 @@ export class SelectionCorrectionService {
                     
                     // 步骤 2: 更新当前段落的范围
                     paragraphForEditOrDiff.range = this.textProcessingService.updateParagraphRange(paragraphForEditOrDiff);
-                    console.log(`[CorrectSelected] ${paragraphId} range updated after applying corrected text. New range:`, paragraphForEditOrDiff.range);
-                      // 步骤 3: 如果行数发生变化，使用简单的增量更新逻辑更新后续段落位置
+                    console.log(`[CorrectSelected] ${paragraphId} range updated after applying corrected text. New range:`, paragraphForEditOrDiff.range);                      // 步骤 3: 如果行数发生变化，使用简单的增量更新逻辑更新后续段落位置
                     if (lineDelta !== 0) {
                         console.log(`[CorrectSelected] ${paragraphId} caused line delta, updating subsequent paragraphs.`);
                         
@@ -361,8 +389,15 @@ export class SelectionCorrectionService {
                                 nextParagraph.startLineNumber = nextParagraph.startLineNumber + lineDelta;
                                 nextParagraph.startLine = nextParagraph.startLine + lineDelta;
                                 nextParagraph.endLine = nextParagraph.endLine + lineDelta;
+                                
+                                // 更新段落的范围
+                                nextParagraph.range = this.textProcessingService.updateParagraphRange(nextParagraph);
+                                
                                 console.log(`[CorrectSelected] 更新后续段落 ${nextParagraph.id.substring(0,4)} 起始行号为 ${nextParagraph.startLineNumber}`);
                             }
+                            
+                            // 关键修复：更新后续段落的diff信息位置
+                            this.updateDiffInfoForParagraph(paragraphForEditOrDiff, editor, lineDelta);
                         }
                     }
                     
@@ -624,26 +659,25 @@ export class SelectionCorrectionService {
             console.error(`[RejectParagraph] Paragraph ${paragraphId} has no range. Cannot reject.`);
             vscode.window.showErrorMessage("无法拒绝修改：段落范围丢失。");
             return;
-        }
-
-        try {
-            // 步骤1：从 DiffManager 中移除该段落的差异高亮 (通过修改EditorState中的changes)
+        }        try {
+            // 保存清理diff所需的信息（在修改段落状态之前）
+            const rangeForDiffCleanup = paragraph.range;
+            const originalContentForDiffCleanup = paragraph.originalContent;
+            const correctedContentForDiffCleanup = paragraph.correctedContent;
+            
+            console.log(`[RejectParagraphDebug] 准备清理diff信息。Range: L${rangeForDiffCleanup.start.line}C${rangeForDiffCleanup.start.character}-L${rangeForDiffCleanup.end.line}C${rangeForDiffCleanup.end.character}, Original: "${originalContentForDiffCleanup}", Corrected: "${correctedContentForDiffCleanup}"`);
+            
+            // 步骤1：直接从EditorStateManager中移除该段落的差异高亮
             const allChanges = this.editorStateManager.getChanges(editor);
             console.log(`[RejectParagraphDebug] Found ${allChanges.length} total ChangeInfos in EditorStateManager for editor: ${editor.document.uri.toString()}`);
-            // rangeToModify (即 paragraph.range 传给 editor.edit 时的值) 是被替换的范围,
-            // 它对应的是 correctedContent 在被替换前的范围。
-            const originalContent = paragraph.originalContent;
-            const correctedContentPriorToNull = paragraph.correctedContent; // 在它被设为null之前获取
-
-            console.log(`[RejectParagraphDebug] Attempting to find ChangeInfo for P.ID: ${paragraph.id.substring(0,4)}. Match criteria - Range: L${rangeToModify.start.line}C${rangeToModify.start.character}-L${rangeToModify.end.line}C${rangeToModify.end.character}, Original: "${originalContent.substring(0,30)}...", Corrected: "${correctedContentPriorToNull ? correctedContentPriorToNull.substring(0,30) : 'null'}..."`);
-
-            if (correctedContentPriorToNull === null) { 
+            
+            if (correctedContentForDiffCleanup === null) { 
                 console.warn(`[RejectParagraph] Paragraph ${paragraph.id} has no corrected content, so no ChangeInfo to remove for diff.`);
             } else {
                 const remainingChanges = allChanges.filter((change, index) => {
-                    const isRangeEqual = change.range.isEqual(rangeToModify);
-                    const isOriginalEqual = change.original === originalContent;
-                    const isCorrectedEqual = change.corrected === correctedContentPriorToNull;
+                    const isRangeEqual = change.range.isEqual(rangeForDiffCleanup);
+                    const isOriginalEqual = change.original === originalContentForDiffCleanup;
+                    const isCorrectedEqual = change.corrected === correctedContentForDiffCleanup;
                     const isMatch = isRangeEqual && isOriginalEqual && isCorrectedEqual;
 
                     console.log(`[RejectParagraphDebug] Checking ChangeInfo[${index}]: ` +
@@ -660,17 +694,13 @@ export class SelectionCorrectionService {
 
                 if (allChanges.length !== remainingChanges.length) {
                     this.editorStateManager.setChanges(editor, remainingChanges);
+                    console.log(`[RejectParagraph] Successfully removed ChangeInfo. Remaining changes: ${remainingChanges.length}`);
                 } else {
-                    console.warn(`[RejectParagraph] Did not find matching ChangeInfo in EditorStateManager for paragraph ${paragraph.id} (range: ${rangeToModify.start.line}, corrected: ${correctedContentPriorToNull}) to remove.`);
+                    console.warn(`[RejectParagraph] Did not find matching ChangeInfo in EditorStateManager for paragraph ${paragraph.id} to remove.`);
                 }
             }
-            // 确保在从DiffManager移除（通过间接修改EditorState）后，强制更新装饰
-            if (this.diffManager) {
-               setTimeout(() => this.diffManager?.updateDecorationsForEditor(editor), 50);
-            }
-
+            
             // 步骤2：将编辑器的文本还原为原始内容
-            // 使用 paragraph.range (即 rangeToModify) 作为目标进行替换
             await editor.edit(editBuilder => {
                 editBuilder.replace(rangeToModify, paragraph.originalContent);
             });
@@ -680,7 +710,6 @@ export class SelectionCorrectionService {
             paragraph.correctedContent = null; // 清空纠正内容
 
             // 步骤4：更新段落的范围以反映原始内容
-            // updateParagraphRange 会使用 paragraph.startLine 和 originalContent
             paragraph.range = this.textProcessingService.updateParagraphRange(paragraph);
             
             // 步骤5：如果行数因还原而发生变化，则更新所有段落的位置
@@ -689,14 +718,10 @@ export class SelectionCorrectionService {
                 console.log(`[RejectParagraph] Paragraph ${paragraphId} rejection caused line delta: ${lineDelta}. Updating positions.`);
                 this.updateAllParagraphsPosition(editor);
             }
-
-            // 在清理diff之前检查EditorStateManager中的ChangeInfo
-            const changesBeforeCleanup = this.editorStateManager.getChanges(editor);
-            console.log(`[RejectParagraphDebug] Before cleanup, EditorStateManager has ${changesBeforeCleanup.length} ChangeInfos`);
-            if (changesBeforeCleanup.length > 0) {
-                changesBeforeCleanup.forEach((change, index) => {
-                    console.log(`[RejectParagraphDebug] ChangeInfo[${index}] - Range: L${change.range.start.line}C${change.range.start.character}-L${change.range.end.line}C${change.range.end.character}, Original: "${change.original.substring(0,30)}...", Corrected: "${change.corrected.substring(0,30)}..."`);
-                });
+            
+            // 步骤6：强制更新装饰以反映变化
+            if (this.diffManager) {
+                this.diffManager.updateDecorationsForEditor(editor);
             }
             
             // 保存更新后的段落集合
