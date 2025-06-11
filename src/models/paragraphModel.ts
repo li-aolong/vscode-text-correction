@@ -30,6 +30,8 @@ export interface ParagraphModel {
  * 段落状态枚举
  */
 export enum ParagraphStatus {
+    /** 正在处理中 */
+    Processing = 'processing',
     /** 待处理 */
     Pending = 'pending',
     /** 已接受 */

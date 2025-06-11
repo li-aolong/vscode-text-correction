@@ -363,11 +363,8 @@ export class SelectionCorrectionService {
                     await editor.edit(editBuilder => {
                         editBuilder.replace(rangeToUseForReplacement, correctedText);
                     });
-                    console.log(`[CorrectSelected] ${paragraphId} Text replaced in editor.`);
-
-                    // 更新段落模型的状态和纠正内容
+                    console.log(`[CorrectSelected] ${paragraphId} Text replaced in editor.`);                    // 更新段落模型的纠正内容
                     paragraphForEditOrDiff.correctedContent = correctedText;
-                    paragraphForEditOrDiff.status = ParagraphStatus.Pending;
                     
                     // 计算行数变化
                     const originalLines = selectedText.split('\n').length;
@@ -407,7 +404,7 @@ export class SelectionCorrectionService {
                     // 步骤 4: 应用差异显示
                     this.applyDiffToEditor(editor, paragraphForEditOrDiff);
                     
-                    // 所有编辑和diff应用完成后，设置状态为 Pending (待审核)
+                    // 设置状态为 Pending (待审核) - 只有确实有纠正内容时才设置为Pending
                     paragraphForEditOrDiff.status = ParagraphStatus.Pending;
                     console.log(`[CorrectSelected] ${paragraphId} status set to Pending for review.`);
                     
@@ -439,16 +436,15 @@ export class SelectionCorrectionService {
             this.operationLockService.releaseOperationLock(lockKey);
             console.log(`[CorrectSelected] ${paragraphId} processing finished. Lock released.`);
         }
-    }
-
-    /**
+    }    /**
      * 根据选择创建段落模型
      */
     private createParagraphModelFromSelection(
         editor: vscode.TextEditor,
         selectionRange: vscode.Range,
         selectedText: string
-    ): ParagraphModel {        return {
+    ): ParagraphModel {
+        return {
             id: uuidv4(), // 这个id会被 correctSelectedText 中的 paragraphId 覆盖
             originalContent: selectedText,
             correctedContent: null,
@@ -456,11 +452,11 @@ export class SelectionCorrectionService {
             startLineNumber: selectionRange.start.line, 
             endLine: selectionRange.end.line,
             range: new vscode.Range(selectionRange.start, selectionRange.end), // 使用传入的精确范围
-            status: ParagraphStatus.Pending, // 初始状态设为Pending，在API调用完成后会更新状态
+            status: ParagraphStatus.Processing, // 初始状态设为Processing，等API返回有纠正内容时再设为Pending
             error: undefined,
             trailingEmptyLines: 0 
         };
-    }    /**
+    }/**
      * 将段落模型添加到文档段落集合
      */
     private addParagraphToDocument(editor: vscode.TextEditor, paragraph: ParagraphModel): void {
