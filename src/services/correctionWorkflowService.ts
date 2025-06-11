@@ -6,6 +6,7 @@ import { ApiService } from './apiService';
 import { TextProcessingService } from './textProcessingService';
 import { DocumentEditService } from './documentEditService';
 import { CostService } from './costService';
+import { TimeStatisticsService } from './timeStatisticsService';
 import { ParagraphStatus } from '../models/paragraphModel';
 
 
@@ -17,6 +18,7 @@ export class CorrectionWorkflowService {
     private textProcessingService: TextProcessingService;
     private documentEditService: DocumentEditService;
     private costService: CostService;
+    private timeStatisticsService: TimeStatisticsService;
     private _onDidChangeParagraphCorrections: vscode.EventEmitter<void>;
 
     constructor(
@@ -26,6 +28,7 @@ export class CorrectionWorkflowService {
         textProcessingService: TextProcessingService,
         documentEditService: DocumentEditService,
         costService: CostService,
+        timeStatisticsService: TimeStatisticsService,
         onDidChangeParagraphCorrections: vscode.EventEmitter<void>
     ) {
         this.configManager = configManager;
@@ -34,6 +37,7 @@ export class CorrectionWorkflowService {
         this.textProcessingService = textProcessingService;
         this.documentEditService = documentEditService;
         this.costService = costService;
+        this.timeStatisticsService = timeStatisticsService;
         this._onDidChangeParagraphCorrections = onDidChangeParagraphCorrections;
     }
 
@@ -69,6 +73,12 @@ export class CorrectionWorkflowService {
 
         // 创建文档段落集合
         const documentParagraphs = this.textProcessingService.createDocumentParagraphs(originalDocumentContent);
+
+        // 计算总字符数用于时间统计
+        const totalCharacters = documentParagraphs.paragraphs.reduce((sum, p) => sum + p.originalContent.length, 0);
+        
+        // 开始时间统计
+        this.timeStatisticsService.startTimeTracking(editor, totalCharacters);
 
         // 保存原始文档内容和段落集合到编辑器状态中
         this.editorStateManager.updateEditorState(editor, {
@@ -136,6 +146,9 @@ export class CorrectionWorkflowService {
                     // 设置段落状态为处理中
                     paragraph.status = ParagraphStatus.Processing;
                     
+                    // 开始段落计时
+                    const paragraphStartTime = this.timeStatisticsService.startParagraphTimer(editor);
+                    
                     // 调用API进行文本纠错
                     const apiResult = await this.apiService.correctText(paragraph.originalContent);
 
@@ -144,6 +157,13 @@ export class CorrectionWorkflowService {
                         console.log(`[CorrectionWorkflow] API调用后检测到取消操作，不应用段落 ${paragraph.id} 的修改`);
                         break; // 立即跳出循环，不再处理任何段落
                     }
+                    
+                    // 记录段落完成时间和字符数
+                    this.timeStatisticsService.recordParagraphCompletion(
+                        editor, 
+                        paragraphStartTime, 
+                        paragraph.originalContent.length
+                    );
 
                     // 计算并累计花费
                     if (apiResult.usage) {
@@ -218,6 +238,9 @@ export class CorrectionWorkflowService {
         // 获取最终状态
         const finalState = this.editorStateManager.getEditorState(editor);
         
+        // 完成时间统计
+        const finalTimeStats = this.timeStatisticsService.completeTimeTracking(editor);
+        
         // 更新编辑器状态
         this.editorStateManager.updateEditorState(editor, {
             isCorrectingInProgress: false
@@ -226,6 +249,8 @@ export class CorrectionWorkflowService {
         // 如果操作被取消，不触发任何更新或显示任何消息
         if (finalState.isCancelled) {
             console.log(`[CorrectionWorkflow] 纠错操作已被用户取消，不进行后续处理`);
+            // 清理时间统计
+            this.timeStatisticsService.clearTimeStatistics(editor);
             return;
         }
 
@@ -239,10 +264,20 @@ export class CorrectionWorkflowService {
             }, 100);
         }
 
+        // 生成包含时间统计的完成消息
+        const fileName = editorUri.split('/').pop();
+        let completionMessage = `文档 "${fileName}" 纠错完成`;
+        
+        if (finalTimeStats) {
+            completionMessage += `，耗时 ${this.timeStatisticsService.formatTime(finalTimeStats.totalElapsedTime)}`;
+        }
+
         if (this.diffManager && this.diffManager.hasChanges()) {
-            vscode.window.showInformationMessage(`文档 "${editorUri.split('/').pop()}" 纠错完成，请使用段落旁的按钮进行接受或拒绝操作。`);
+            completionMessage += `，请使用段落旁的按钮进行接受或拒绝操作。`;
+            vscode.window.showInformationMessage(completionMessage);
         } else {
-            vscode.window.showInformationMessage(`文档 "${editorUri.split('/').pop()}" 纠错完成，未发现需要修改的内容。`);
+            completionMessage += `，未发现需要修改的内容。`;
+            vscode.window.showInformationMessage(completionMessage);
         }
     }
 
@@ -251,6 +286,7 @@ export class CorrectionWorkflowService {
      */
     public clearAllCorrectionsState(editor: vscode.TextEditor): void {
         this.editorStateManager.clearEditorCorrectionState(editor);
+        this.timeStatisticsService.clearTimeStatistics(editor);
         if (this.diffManager) {
             this.diffManager.clearDecorationsForEditor(editor);
         }

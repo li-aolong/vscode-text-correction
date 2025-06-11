@@ -60,7 +60,7 @@ export class ApiService {
                         'Authorization': `Bearer ${config.apiKey}`,
                         'Content-Type': 'application/json'
                     },
-                    timeout: config.timeout || 30000 // 使用配置的超时或默认值
+                    timeout: config.timeout || 10000 // 使用配置的超时或默认值
                 }
             );
 

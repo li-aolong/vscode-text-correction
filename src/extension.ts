@@ -5,19 +5,22 @@ import { DiffManager } from './diff/diffManager';
 import { ParagraphCodeLensProvider } from './providers/paragraphCodeLensProvider';
 import { EditorStateManager } from './services/editorStateManager';
 import { StatusBarManager } from './ui/statusBarManager';
+import { TimeStatisticsService } from './services/timeStatisticsService';
 
 let configManager: ConfigManager;
 let correctionService: CorrectionService;
 let diffManager: DiffManager;
 let editorStateManager: EditorStateManager;
 let statusBarManager: StatusBarManager;
+let timeStatisticsService: TimeStatisticsService;
 
 export function activate(context: vscode.ExtensionContext) {
     // 初始化服务
     configManager = new ConfigManager();
     editorStateManager = new EditorStateManager();
-    statusBarManager = new StatusBarManager(editorStateManager, configManager);
-    correctionService = new CorrectionService(configManager, editorStateManager);
+    timeStatisticsService = new TimeStatisticsService();
+    statusBarManager = new StatusBarManager(editorStateManager, configManager, timeStatisticsService);
+    correctionService = new CorrectionService(configManager, editorStateManager, timeStatisticsService);
     diffManager = new DiffManager(editorStateManager);
 
     // 设置服务间的双向关联

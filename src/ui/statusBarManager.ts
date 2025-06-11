@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { EditorStateManager } from '../services/editorStateManager';
 import { ConfigManager } from '../config/configManager';
+import { TimeStatisticsService } from '../services/timeStatisticsService';
 
 /**
  * 单个编辑器的状态栏项目集合
@@ -24,12 +25,18 @@ export class StatusBarManager {
     private editorStatusBars: Map<string, EditorStatusBarItems> = new Map();
     private editorStateManager: EditorStateManager;
     private configManager: ConfigManager;
+    private timeStatisticsService: TimeStatisticsService;
     private updateTimeout: NodeJS.Timeout | undefined;
     private isUpdatingProgress: boolean = false; // 标记是否正在更新进度
 
-    constructor(editorStateManager: EditorStateManager, configManager: ConfigManager) {
+    constructor(
+        editorStateManager: EditorStateManager, 
+        configManager: ConfigManager,
+        timeStatisticsService: TimeStatisticsService
+    ) {
         this.editorStateManager = editorStateManager;
         this.configManager = configManager;
+        this.timeStatisticsService = timeStatisticsService;
 
         // 监听编辑器状态变化
         this.editorStateManager.onDidChangeEditorState(() => {
@@ -249,13 +256,26 @@ export class StatusBarManager {
         items.correctionStatusBarItem.text = `$(loading~spin) 纠错中...(${current}/${total})`;
         items.correctionStatusBarItem.command = undefined; // 禁用命令
 
-        // 设置详细的进度提示信息
-        const remaining = total - current;
-        const progressTooltip = `纠错进度详情：
-总共段落: ${total}
-已纠正段落: ${current}
-剩余段落: ${remaining}
-进度: ${Math.round((current / total) * 100)}%`;
+        // 获取时间统计信息
+        const timeStats = this.timeStatisticsService.getTimeStatistics(editor);
+        
+        // 使用等宽字体格式化函数实现右对齐
+        const formatLine = (label: string, value: string, totalWidth: number = 18) => {
+            const spaces = ' '.repeat(Math.max(1, totalWidth - label.length - value.length));
+            return `${label}${spaces}${value}`;
+        };
+
+        let progressTooltip = `**纠错进度详情：**\n`;
+        progressTooltip += formatLine('总共段落:', total.toString()) + '\n';
+        progressTooltip += formatLine('已纠正段落:', current.toString()) + '\n';
+        progressTooltip += formatLine('剩余段落:', (total - current).toString()) + '\n';
+        progressTooltip += formatLine('进度:', `${Math.round((current / total) * 100)}%`);
+
+        // 添加时间统计信息到tooltip
+        if (timeStats) {
+            progressTooltip += `\n\n${this.timeStatisticsService.getDetailedTimeInfo(editor)}`;
+        }
+
         items.correctionStatusBarItem.tooltip = progressTooltip;
 
         // 更新花费信息状态栏
@@ -329,13 +349,30 @@ export class StatusBarManager {
         const inputCost = inputTokens * inputRate;
         const outputCost = outputTokens * outputRate;
 
-        return `花费详情：
-输入tokens: ${inputTokens}
-输出tokens: ${outputTokens}
-总tokens: ${totalTokens}
-输入花费: ${currencySymbol}${inputCost.toFixed(6)}
-输出花费: ${currencySymbol}${outputCost.toFixed(6)}
-总计: ${currencySymbol}${costInfo.totalCost.toFixed(6)}`;
+        // 使用等宽字体格式化函数实现右对齐
+        const formatLine = (label: string, value: string, totalWidth: number = 22) => {
+            const spaces = ' '.repeat(Math.max(1, totalWidth - label.length - value.length));
+            return `${label}${spaces}${value}`;
+        };
+
+        let costDetails = `**花费详情：**\n`;
+        costDetails += formatLine('输入tokens:', inputTokens.toString()) + '\n';
+        costDetails += formatLine('输出tokens:', outputTokens.toString()) + '\n';
+        costDetails += formatLine('总tokens:', totalTokens.toString()) + '\n';
+        costDetails += formatLine('输入花费:', `${currencySymbol}${inputCost.toFixed(6)}`) + '\n';
+        costDetails += formatLine('输出花费:', `${currencySymbol}${outputCost.toFixed(6)}`) + '\n';
+        costDetails += formatLine('总计:', `${currencySymbol}${costInfo.totalCost.toFixed(6)}`);
+
+        // 如果有当前编辑器，尝试添加时间统计信息
+        const activeEditor = vscode.window.activeTextEditor;
+        if (activeEditor) {
+            const timeStats = this.timeStatisticsService.getTimeStatistics(activeEditor);
+            if (timeStats && timeStats.totalElapsedTime > 0) {
+                costDetails += `\n\n${this.timeStatisticsService.getDetailedTimeInfo(activeEditor)}`;
+            }
+        }
+
+        return costDetails;
     }
 
     /**

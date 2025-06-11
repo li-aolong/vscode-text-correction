@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { ChangeInfo } from '../diff/diffManager';
 import { DocumentParagraphs, ParagraphStatus } from '../models/paragraphModel';
+import { TimeStatistics } from './timeStatisticsService';
 
 /**
  * 花费统计信息
@@ -25,6 +26,7 @@ export interface EditorState {
     decorationsApplied: boolean; // 标记装饰是否已应用
     lastDecorationUpdate: number; // 最后一次装饰更新时间
     costInfo: CostInfo; // 花费统计信息
+    timeStatistics?: TimeStatistics; // 时间统计信息
     documentParagraphs?: DocumentParagraphs; // 文档段落集合
 }
 

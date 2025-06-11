@@ -6,11 +6,12 @@ import { ApiService } from './apiService';
 import { TextProcessingService } from './textProcessingService';
 import { DocumentEditService } from './documentEditService';
 import { CostService } from './costService';
-import { OperationLockService } from './operationLockService';
+import { CorrectionWorkflowService } from './correctionWorkflowService';
 import { DiffHandlerService } from './diffHandlerService';
 import { ParagraphActionService } from './paragraphActionService';
-import { CorrectionWorkflowService } from './correctionWorkflowService';
+import { OperationLockService } from './operationLockService';
 import { SelectionCorrectionService } from './selectionCorrectionService';
+import { TimeStatisticsService } from './timeStatisticsService';
 import { DocumentParagraphs } from '../models/paragraphModel';
 
 export class CorrectionService {
@@ -35,13 +36,13 @@ export class CorrectionService {
     private selectionCorrectionService: SelectionCorrectionService;
     private diffManagerInstance: DiffManager | undefined; // Store the DiffManager instance
 
-    constructor(configManager: ConfigManager, editorStateManager: EditorStateManager) {
+    constructor(configManager: ConfigManager, editorStateManager: EditorStateManager, timeStatisticsService: TimeStatisticsService) {
         // 初始化第一层服务类
         this.editorStateManager = editorStateManager;
         this.apiService = new ApiService(configManager);
         this.textProcessingService = new TextProcessingService();
         this.documentEditService = new DocumentEditService(editorStateManager);
-        this.costService = new CostService(configManager, editorStateManager);
+        this.costService = new CostService(configManager, editorStateManager, timeStatisticsService);
         this.operationLockService = new OperationLockService();
         
         // 初始化第二层服务类 (部分)
@@ -54,6 +55,7 @@ export class CorrectionService {
             this.textProcessingService,
             this.documentEditService,
             this.costService,
+            timeStatisticsService,
             this._onDidChangeParagraphCorrections
         );
 
