@@ -316,16 +316,19 @@ export class SelectionCorrectionService {    private editorStateManager: EditorS
             
             // 确保文档段落集合存在并获取它
             const docParagraphs = this.ensureDocumentParagraphs(editor);
-            
-            // 创建选中文本的段落模型
+              // 创建选中文本的段落模型
             // 注意：此时的 selectionRange (即 initialSelectionRange) 是基于调用此函数时的文档状态
             let paragraphModel = this.createParagraphModelFromSelection(editor, initialSelectionRange, selectedText);
             paragraphModel.id = paragraphId; // 使用生成的ID
+            paragraphModel.status = ParagraphStatus.Processing; // 设置为处理中状态
             
             // 将新创建的段落模型添加到全局段落列表中
             // 这一步很重要，确保后续的 updateAllParagraphsPosition 能感知到这个新段落
             this.addParagraphToDocument(editor, paragraphModel);
             console.log(`[CorrectSelected] Paragraph ${paragraphId} model added to docParagraphs. Initial range:`, paragraphModel.range);
+            
+            // 立即触发UI更新以显示处理中状态
+            this._onDidChangeParagraphCorrections.fire();
             
             // 调用API进行文本纠正
             try {
@@ -413,13 +416,11 @@ export class SelectionCorrectionService {    private editorStateManager: EditorS
                     paragraphForEditOrDiff.status = ParagraphStatus.Pending;
                     console.log(`[CorrectSelected] ${paragraphId} status set to Pending for review.`);
                     
-                    this._onDidChangeParagraphCorrections.fire();
-                } else {
+                    this._onDidChangeParagraphCorrections.fire();                } else {
                     // 文本无需纠正
-                    paragraphForEditOrDiff.status = ParagraphStatus.Rejected; // 更新状态
+                    paragraphForEditOrDiff.status = ParagraphStatus.NoCorrection; // 更新状态
                     this.setDocumentParagraphs(editor, currentDocParagraphs); // 保存状态更改
-                    console.log(`[CorrectSelected] ${paragraphId} text needs no correction. Status set to Rejected.`);
-                    vscode.window.showInformationMessage('文本无需纠正');
+                    console.log(`[CorrectSelected] ${paragraphId} text needs no correction. Status set to NoCorrection.`);
                     this._onDidChangeParagraphCorrections.fire();
                 }
             } catch (error) { // API 调用或后续处理的错误

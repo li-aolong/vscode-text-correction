@@ -38,6 +38,8 @@ export enum ParagraphStatus {
     Accepted = 'accepted',
     /** 已拒绝 */
     Rejected = 'rejected',
+    /** 无需纠正 */
+    NoCorrection = 'no-correction',
     /** 处理出错 */
     Error = 'error'
 }

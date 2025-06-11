@@ -485,14 +485,35 @@ export class ParagraphActionService {
         } finally {
             this.operationLockService.releaseOperationLock(lockKey);
         }
-    }
-
-    /**
+    }    /**
      * 关闭错误提示
      */
     public async dismissError(paragraphId: string, editor: vscode.TextEditor): Promise<void> {
         const paragraph = this.getParagraphById(paragraphId, editor);
         if (!paragraph || paragraph.status !== ParagraphStatus.Error) {
+            return;
+        }
+
+        // 更新段落状态为拒绝
+        paragraph.status = ParagraphStatus.Rejected;
+
+        // 保存更新后的段落集合
+        const docParagraphs = this.getDocumentParagraphs(editor);
+        if (docParagraphs) {
+            this.setDocumentParagraphs(editor, docParagraphs);
+        }
+
+        // 触发更新
+        this._onDidChangeParagraphCorrections.fire();
+        this.triggerStatusBarUpdate();
+    }
+
+    /**
+     * 关闭"无需纠正"状态
+     */
+    public async dismissNoCorrection(paragraphId: string, editor: vscode.TextEditor): Promise<void> {
+        const paragraph = this.getParagraphById(paragraphId, editor);
+        if (!paragraph || paragraph.status !== ParagraphStatus.NoCorrection) {
             return;
         }
 

@@ -133,6 +133,9 @@ export class CorrectionWorkflowService {
                         break; // 立即跳出循环，不再处理任何段落
                     }
                     
+                    // 设置段落状态为处理中
+                    paragraph.status = ParagraphStatus.Processing;
+                    
                     // 调用API进行文本纠错
                     const apiResult = await this.apiService.correctText(paragraph.originalContent);
 
@@ -198,6 +201,10 @@ export class CorrectionWorkflowService {
                                 this.diffManager?.updateDecorationsForEditor(currentEditor);
                             }, 50);
                         }
+                    } else {
+                        // 文本无需纠正
+                        paragraph.status = ParagraphStatus.NoCorrection;
+                        console.log(`[CorrectionWorkflow] 段落 ${paragraph.id} 无需纠正，状态设置为 NoCorrection`);
                     }
                 } catch (error) {
                     // 记录错误信息

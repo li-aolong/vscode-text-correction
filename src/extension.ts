@@ -171,11 +171,19 @@ function registerCommands(context: vscode.ExtensionContext) {
             await paragraphActionService.dismissError(paragraphId, editor);
             updateStatusBarForCurrentEditor();
         }
-    });
-
-    // 更新状态栏命令
+    });    // 更新状态栏命令
     const updateStatusBarCommand = vscode.commands.registerCommand('textCorrection.updateStatusBar', () => {
         updateStatusBarForCurrentEditor();
+    });
+
+    // 取消"无需纠正"状态命令
+    const dismissNoCorrectionCommand = vscode.commands.registerCommand('textCorrection.dismissNoCorrection', (paragraphId: string) => {
+        const editor = vscode.window.activeTextEditor;
+        if (editor) {
+            const paragraphActionService = (correctionService as any).paragraphActionService;
+            paragraphActionService.dismissNoCorrection(paragraphId, editor);
+            updateStatusBarForCurrentEditor();
+        }
     });
 
     context.subscriptions.push(
@@ -189,6 +197,7 @@ function registerCommands(context: vscode.ExtensionContext) {
         acceptParagraphCommand,
         rejectParagraphCommand,
         dismissErrorCommand,
+        dismissNoCorrectionCommand,
         updateStatusBarCommand,
         statusBarManager,
         diffManager
