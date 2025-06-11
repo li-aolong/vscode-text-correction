@@ -168,9 +168,7 @@ export class EditorStateManager {
         const state = this.getEditorState(editor);
         Object.assign(state, updates);
         this._onDidChangeEditorState.fire(state.uri);
-    }
-
-    /**
+    }    /**
      * 清除编辑器的纠错状态
      */
     public clearEditorCorrectionState(editor: vscode.TextEditor): void {
@@ -182,14 +180,8 @@ export class EditorStateManager {
         state.currentChangeIndex = 0;
         state.isCancelled = false;
         state.isCorrectingInProgress = false;
-        state.originalDocumentContent = '';
-        // 重置花费信息
-        state.costInfo = {
-            totalInputTokens: 0,
-            totalOutputTokens: 0,
-            totalCost: 0,
-            currency: state.costInfo.currency // 保留货币单位
-        };
+        state.originalDocumentContent = '';        // 不再重置花费信息，让费用一直累加直到用户关闭页面
+        // state.costInfo 保持不变
         this._onDidChangeEditorState.fire(state.uri);
     }
 

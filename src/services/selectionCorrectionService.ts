@@ -5,6 +5,7 @@ import { TextProcessingService } from './textProcessingService';
 import { DocumentEditService } from './documentEditService';
 import { OperationLockService } from './operationLockService';
 import { DiffHandlerService } from './diffHandlerService';
+import { CostService } from './costService';
 import { ParagraphModel, ParagraphStatus, DocumentParagraphs } from '../models/paragraphModel';
 import { DiffManager, ChangeInfo } from '../diff/diffManager';
 import { v4 as uuidv4 } from 'uuid';
@@ -12,26 +13,25 @@ import { v4 as uuidv4 } from 'uuid';
 /**
  * 选中文本纠错服务 - 处理用户选中文本的纠错操作
  */
-export class SelectionCorrectionService {
-    private editorStateManager: EditorStateManager;
+export class SelectionCorrectionService {    private editorStateManager: EditorStateManager;
     private apiService: ApiService;
     private textProcessingService: TextProcessingService;
     private documentEditService: DocumentEditService;
     private operationLockService: OperationLockService;
     private diffHandlerService: DiffHandlerService;
+    private costService: CostService;
     private diffManager: DiffManager | undefined;
     private _onDidChangeParagraphCorrections: vscode.EventEmitter<void>;
     
     // 记录当前正在处理的段落范围
-    private processingRanges: Map<string, vscode.Range[]> = new Map();
-
-    constructor(
+    private processingRanges: Map<string, vscode.Range[]> = new Map();    constructor(
         editorStateManager: EditorStateManager,
         apiService: ApiService,
         textProcessingService: TextProcessingService,
         documentEditService: DocumentEditService,
         operationLockService: OperationLockService,
         diffHandlerService: DiffHandlerService,
+        costService: CostService,
         onDidChangeParagraphCorrections: vscode.EventEmitter<void>
     ) {
         this.editorStateManager = editorStateManager;
@@ -40,6 +40,7 @@ export class SelectionCorrectionService {
         this.documentEditService = documentEditService;
         this.operationLockService = operationLockService;
         this.diffHandlerService = diffHandlerService;
+        this.costService = costService;
         this._onDidChangeParagraphCorrections = onDidChangeParagraphCorrections;
     }
 
@@ -329,10 +330,14 @@ export class SelectionCorrectionService {
             // 调用API进行文本纠正
             try {
                 console.log(`[CorrectSelected] API Input for ${paragraphId} (selectedText): >>>${selectedText}<<<`);
-                const response = await this.apiService.correctText(selectedText);
-                console.log(`[CorrectSelected] API Response for ${paragraphId} (raw):`, JSON.stringify(response));
+                const response = await this.apiService.correctText(selectedText);                console.log(`[CorrectSelected] API Response for ${paragraphId} (raw):`, JSON.stringify(response));
                 const correctedText = response.correctedText;
                 console.log(`[CorrectSelected] API Output for ${paragraphId} (correctedText): >>>${correctedText}<<<`);
+                
+                // 计算并累计选中纠错的费用
+                if (response.usage) {
+                    this.costService.calculateAndUpdateCost(editor, response.usage);
+                }
                 
                 // 当API结果返回时，其他操作（如P1的编辑）可能已经修改了文档
                 // 并且可能已调用 updateAllParagraphsPosition 更新了本段落（P2）在 docParagraphs 中的位置信息

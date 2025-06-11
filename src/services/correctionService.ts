@@ -65,6 +65,7 @@ export class CorrectionService {
             this.documentEditService,
             this.operationLockService,
             this.diffHandlerService,
+            this.costService,
             this._onDidChangeParagraphCorrections
         );
     }
