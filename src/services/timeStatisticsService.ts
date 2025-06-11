@@ -127,32 +127,73 @@ export class TimeStatisticsService {
         return `${Math.round(charactersPerSecond)}字符/秒`;
     }    /**
      * 获取详细的时间统计信息（用于tooltip显示）
-     */    public getDetailedTimeInfo(editor: vscode.TextEditor): string {
+     * 返回 MarkdownString 对象，支持HTML表格布局实现左右对齐
+     */
+    public getDetailedTimeInfo(editor: vscode.TextEditor): vscode.MarkdownString {
         const timeStats = this.getTimeStatistics(editor);
         
         if (!timeStats) {
-            return '暂无时间统计信息';
+            const markdown = new vscode.MarkdownString('暂无时间统计信息', true);
+            markdown.supportHtml = true;
+            return markdown;
         }
 
-        // 使用等宽字体显示格式，手动计算空格实现右对齐
-        const formatLine = (label: string, value: string, totalWidth: number = 24) => {
-            const spaces = ' '.repeat(Math.max(1, totalWidth - label.length - value.length));
-            return `${label}${spaces}${value}`;
-        };
+        // 创建 MarkdownString 并启用 HTML 支持
+        const markdown = new vscode.MarkdownString('', true);
+        markdown.supportHtml = true;        // 构建表格行数据
+        const rows: Array<{label: string, value: string}> = [
+            { label: '总耗时', value: this.formatTime(timeStats.totalElapsedTime) }
+        ];
 
-        let info = `**时间统计：**\n`;
-        info += formatLine('总耗时:', this.formatTime(timeStats.totalElapsedTime)) + '\n';
-        info += formatLine('上次段落耗时:', this.formatTime(timeStats.lastParagraphTime)) + '\n';
-        
+        // 如果有平均速度信息，添加到表格中
         if (timeStats.averageCharactersPerSecond > 0) {
-            info += formatLine('平均速度:', this.formatSpeed(timeStats.averageCharactersPerSecond)) + '\n';
-        }
-        
-        if (timeStats.estimatedRemainingTime > 0) {
-            info += formatLine('预估剩余时间:', this.formatTime(timeStats.estimatedRemainingTime));
+            rows.push({ 
+                label: '平均速度', 
+                value: this.formatSpeed(timeStats.averageCharactersPerSecond) 
+            });
         }
 
-        return info;
+        // 如果有预估剩余时间，添加到表格中
+        if (timeStats.estimatedRemainingTime > 0) {
+            rows.push({ 
+                label: '预估剩余时间', 
+                value: this.formatTime(timeStats.estimatedRemainingTime) 
+            });
+        }
+
+        // 生成表格行HTML
+        const tableRows = rows.map(row => 
+            `<tr><td style="text-align: left; padding-right: 20px;">${row.label}:</td><td style="text-align: right; font-family: 'Courier New', monospace;">${row.value}</td></tr>`
+        ).join('');
+
+        // 设置HTML内容，使用表格布局实现左右对齐
+        markdown.value = `
+<style>
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    }
+    td {
+        padding: 2px 0;
+        vertical-align: top;
+    }
+    .title {
+        font-weight: bold;
+        font-size: 1.1em;
+    }
+</style>
+<table>
+    <tr>
+        <td colspan="2" style="text-align: center; padding-bottom: 8px; border-bottom: 1px solid #e1e4e8;" class="title">
+            <strong>时间统计</strong>
+        </td>
+    </tr>
+    ${tableRows}
+</table>
+`;
+
+        return markdown;
     }
 
     /**
@@ -179,24 +220,19 @@ export class TimeStatisticsService {
         this.editorTimeStats.delete(uri);
     }    /**
      * 获取最终统计摘要（用于最终花费详情显示）
-     */    public getFinalTimeSummary(editor: vscode.TextEditor): string {
+     * 返回格式化的时间统计信息，使用HTML表格实现对齐
+     */
+    public getFinalTimeSummary(editor: vscode.TextEditor): string {
         const timeStats = this.getTimeStatistics(editor);
         
         if (!timeStats) {
             return '';
         }
 
-        // 使用相同的格式化函数实现右对齐
-        const formatLine = (label: string, value: string, totalWidth: number = 20) => {
-            const spaces = ' '.repeat(Math.max(1, totalWidth - label.length - value.length));
-            return `${label}${spaces}${value}`;
-        };
-
-        let summary = `\n**时间统计：**\n`;
-        summary += formatLine('总纠错时间:', this.formatTime(timeStats.totalElapsedTime)) + '\n';
-        summary += formatLine('总字符数:', timeStats.processedCharacters.toString());
-
-        return summary;
+        // 使用简单的格式，因为这会被添加到成本详情的字符串中
+        return `\n时间统计：
+总纠错时间: ${this.formatTime(timeStats.totalElapsedTime)}
+总字符数: ${timeStats.processedCharacters}`;
     }
 
     /**

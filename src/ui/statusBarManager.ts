@@ -259,23 +259,40 @@ export class StatusBarManager {
         // 获取时间统计信息
         const timeStats = this.timeStatisticsService.getTimeStatistics(editor);
         
-        // 使用等宽字体格式化函数实现右对齐
-        const formatLine = (label: string, value: string, totalWidth: number = 18) => {
-            const spaces = ' '.repeat(Math.max(1, totalWidth - label.length - value.length));
-            return `${label}${spaces}${value}`;
-        };
+        // 创建 MarkdownString 用于进度详情 tooltip
+        const progressTooltip = new vscode.MarkdownString('', true);
+        progressTooltip.supportHtml = true;
 
-        let progressTooltip = `**纠错进度详情：**\n`;
-        progressTooltip += formatLine('总共段落:', total.toString()) + '\n';
-        progressTooltip += formatLine('已纠正段落:', current.toString()) + '\n';
-        progressTooltip += formatLine('剩余段落:', (total - current).toString()) + '\n';
-        progressTooltip += formatLine('进度:', `${Math.round((current / total) * 100)}%`);
+        // 构建进度信息表格行
+        const progressRows = [
+            { label: '总共段落', value: total.toString() },
+            { label: '已纠正段落', value: current.toString() },
+            { label: '剩余段落', value: (total - current).toString() },
+            { label: '进度', value: `${Math.round((current / total) * 100)}%` }
+        ];
 
-        // 添加时间统计信息到tooltip
-        if (timeStats) {
-            progressTooltip += `\n\n${this.timeStatisticsService.getDetailedTimeInfo(editor)}`;
+        const progressTableRows = progressRows.map(row => 
+            `<tr><td style="text-align: left; padding-right: 20px;">${row.label}:</td><td style="text-align: right; font-family: 'Courier New', monospace;">${row.value}</td></tr>`
+        ).join('');
+
+        // 构建 HTML 内容
+        let htmlContent = `
+<table style="width: 100%; border-collapse: collapse; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+    <tr>
+        <td colspan="2" style="text-align: center; padding-bottom: 8px; border-bottom: 1px solid #e1e4e8; font-weight: bold; font-size: 1.1em;">
+            <strong>纠错进度详情</strong>
+        </td>
+    </tr>
+    ${progressTableRows}
+</table>`;
+
+        // 添加时间统计信息
+        if (timeStats && timeStats.totalElapsedTime > 0) {
+            const timeMarkdown = this.timeStatisticsService.getDetailedTimeInfo(editor);
+            htmlContent += `<br/>${timeMarkdown.value}`;
         }
 
+        progressTooltip.value = htmlContent;
         items.correctionStatusBarItem.tooltip = progressTooltip;
 
         // 更新花费信息状态栏
@@ -329,10 +346,15 @@ export class StatusBarManager {
 
     /**
      * 格式化详细花费信息（用于tooltip）
+     * 返回 MarkdownString 对象，支持HTML表格布局实现左右对齐
      */
-    private formatDetailedCostInfo(costInfo: any): string {
+    private formatDetailedCostInfo(costInfo: any): vscode.MarkdownString {
+        const markdown = new vscode.MarkdownString('', true);
+        markdown.supportHtml = true;
+
         if (costInfo.totalCost === 0) {
-            return '暂无花费信息';
+            markdown.value = '暂无花费信息';
+            return markdown;
         }
 
         const currencySymbol = costInfo.currency === '元' ? '￥' : '$';
@@ -349,30 +371,64 @@ export class StatusBarManager {
         const inputCost = inputTokens * inputRate;
         const outputCost = outputTokens * outputRate;
 
-        // 使用等宽字体格式化函数实现右对齐
-        const formatLine = (label: string, value: string, totalWidth: number = 22) => {
-            const spaces = ' '.repeat(Math.max(1, totalWidth - label.length - value.length));
-            return `${label}${spaces}${value}`;
-        };
+        // 构建花费信息表格行
+        const costRows = [
+            { label: '输入tokens', value: inputTokens.toString() },
+            { label: '输出tokens', value: outputTokens.toString() },
+            { label: '总tokens', value: totalTokens.toString() },
+            { label: '输入花费', value: currencySymbol + inputCost.toFixed(6) },
+            { label: '输出花费', value: currencySymbol + outputCost.toFixed(6) },
+            { label: '总计', value: currencySymbol + costInfo.totalCost.toFixed(6) }
+        ];
 
-        let costDetails = `**花费详情：**\n`;
-        costDetails += formatLine('输入tokens:', inputTokens.toString()) + '\n';
-        costDetails += formatLine('输出tokens:', outputTokens.toString()) + '\n';
-        costDetails += formatLine('总tokens:', totalTokens.toString()) + '\n';
-        costDetails += formatLine('输入花费:', `${currencySymbol}${inputCost.toFixed(6)}`) + '\n';
-        costDetails += formatLine('输出花费:', `${currencySymbol}${outputCost.toFixed(6)}`) + '\n';
-        costDetails += formatLine('总计:', `${currencySymbol}${costInfo.totalCost.toFixed(6)}`);
+        const costTableRows = costRows.map(row => 
+            `<tr><td style="text-align: left; padding-right: 20px; white-space: nowrap;">${row.label}:</td><td style="text-align: right; font-family: 'Courier New', monospace; white-space: nowrap; min-width: 100px;">${row.value}</td></tr>`
+        ).join('');
+
+        // 构建完整的HTML表格
+        let htmlContent = `
+<style>
+    table {
+        width: 100%;
+        border-collapse: collapse;
+        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+        table-layout: fixed;
+    }
+    td {
+        padding: 2px 0;
+        vertical-align: top;
+    }
+    td:first-child {
+        width: 55%;
+    }
+    td:last-child {
+        width: 45%;
+        text-align: right !important;
+        font-family: 'Courier New', monospace !important;
+    }
+</style>
+<table>
+    <tr>
+        <td colspan="2" style="text-align: center; padding-bottom: 8px; border-bottom: 1px solid #e1e4e8; font-weight: bold; font-size: 1.1em;">
+            <strong>花费详情</strong>
+        </td>
+    </tr>
+    ${costTableRows}
+</table>`;
 
         // 如果有当前编辑器，尝试添加时间统计信息
         const activeEditor = vscode.window.activeTextEditor;
         if (activeEditor) {
             const timeStats = this.timeStatisticsService.getTimeStatistics(activeEditor);
             if (timeStats && timeStats.totalElapsedTime > 0) {
-                costDetails += `\n\n${this.timeStatisticsService.getDetailedTimeInfo(activeEditor)}`;
+                const timeMarkdown = this.timeStatisticsService.getDetailedTimeInfo(activeEditor);
+                // 将时间统计的HTML内容添加到花费信息中
+                htmlContent += `<br/>${timeMarkdown.value}`;
             }
         }
 
-        return costDetails;
+        markdown.value = htmlContent;
+        return markdown;
     }
 
     /**

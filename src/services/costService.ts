@@ -78,19 +78,13 @@ export class CostService {
         const inputCost = inputTokens * inputRate;
         const outputCost = outputTokens * outputRate;
 
-        // 使用等宽字体格式化函数实现右对齐
-        const formatLine = (label: string, value: string, totalWidth: number = 22) => {
-            const spaces = ' '.repeat(Math.max(1, totalWidth - label.length - value.length));
-            return `${label}${spaces}${value}`;
-        };
-
-        let details = `**花费详情：**\n`;
-        details += formatLine('输入tokens:', inputTokens.toString()) + '\n';
-        details += formatLine('输出tokens:', outputTokens.toString()) + '\n';
-        details += formatLine('总tokens:', totalTokens.toString()) + '\n';
-        details += formatLine('输入花费:', `${currencySymbol}${inputCost.toFixed(6)}`) + '\n';
-        details += formatLine('输出花费:', `${currencySymbol}${outputCost.toFixed(6)}`) + '\n';
-        details += formatLine('总计:', `${currencySymbol}${costInfo.totalCost.toFixed(6)}`);
+        let details = `花费详情：
+输入tokens: ${inputTokens.toString().padStart(12)}
+输出tokens: ${outputTokens.toString().padStart(12)}
+总tokens: ${totalTokens.toString().padStart(12)}
+输入花费: ${(currencySymbol + inputCost.toFixed(6)).padStart(12)}
+输出花费: ${(currencySymbol + outputCost.toFixed(6)).padStart(12)}
+总计: ${(currencySymbol + costInfo.totalCost.toFixed(6)).padStart(12)}`;
 
         // 添加时间统计信息
         const timeSummary = this.timeStatisticsService.getFinalTimeSummary(editor);
