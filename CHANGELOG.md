@@ -4,6 +4,40 @@
 
 ---
 
+## [0.0.3] - 2024-06-24
+
+### 新增功能 | New Features
+- **选中文本纠错** | **Selected Text Correction**：支持只对选中的文本进行纠错，提供更灵活的编辑体验
+- **快捷导航** | **Quick Navigation**：新增上一个/下一个修改位置的快捷导航功能，状态栏显示当前位置
+- **时间统计功能** | **Time Statistics Feature**：完整的时间统计系统，包括操作耗时、处理速度和预估剩余时间
+- **智能操作取消** | **Smart Operation Cancel**：优化取消机制，支持纠错过程中的实时取消操作
+
+### 功能增强 | Feature Enhancements
+- **右键菜单集成** | **Context Menu Integration**：选中文本后可通过右键菜单直接启动纠错功能
+- **状态栏导航按钮** | **Status Bar Navigation Buttons**：新增◀▶导航按钮，快速跳转到上一个/下一个修改位置
+- **导航进度显示** | **Navigation Progress Display**：状态栏显示当前修改位置（如"2/5"）
+
+### 技术改进 | Technical Improvements
+- **模块化架构重构** | **Modular Architecture Refactoring**：将功能拆分为专门的服务类，提高代码可维护性
+  - 新增 `SelectionCorrectionService` 专门处理选中文本纠错
+  - 新增 `TimeStatisticsService` 专门处理时间统计
+  - 新增 `OperationLockService` 防止并发操作冲突
+  - 新增 `ParagraphActionService` 处理段落级操作
+- **操作锁机制** | **Operation Lock Mechanism**：防止并发操作冲突，确保数据一致性
+- **智能diff算法** | **Smart Diff Algorithm**：优化字符级差异检测算法，提高准确性
+- **状态管理优化** | **State Management Optimization**：改进多文档状态管理，支持并行处理
+- **异步处理改进** | **Asynchronous Processing Improvements**：优化API调用和UI更新的异步处理
+
+### 用户体验提升 | User Experience Improvements
+- **详细时间信息显示** | **Detailed Time Information Display**：鼠标悬停时显示完整的时间统计信息
+- **实时处理速度** | **Real-time Processing Speed**：显示平均处理速度（字符/秒或字符/分钟）
+- **预估剩余时间** | **Estimated Time Remaining**：动态计算并显示预估完成时间
+- **操作进度优化** | **Operation Progress Optimization**：更准确的进度显示和更友好的用户提示
+- **多文档支持** | **Multi-document Support**：每个文档独立的纠错状态，支持多文档并行处理
+- **智能提示增强** | **Enhanced Smart Tooltips**：更丰富的鼠标悬停提示信息
+
+---
+
 ## [0.0.2] - 2025-05-29
 
 ### 改进 | Improvements
